@@ -249,6 +249,9 @@ paket-files/
 # FAKE - F# Make
 .fake/
 
+# Cursor rules (local only, do not push)
+.cursor/rules/
+
 # JetBrains Rider
 .idea/
 *.sln.iml
