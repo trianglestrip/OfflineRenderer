@@ -1,59 +1,56 @@
 # VLR: 
 
 ![VLR](README_TOP.jpg)\
-IBL image: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
+IBL 图像: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
 
-VLRはNVIDIA OptiX 7を使用したGPUモンテカルロレイトレーシングレンダラーです。\
-VLR is a GPU Monte Carlo ray tracing renderer using NVIDIA OptiX 7.
+VLR 是一个基于 NVIDIA OptiX 7 的 GPU 蒙特卡洛光线追踪渲染器。
 
-## 特徴 / Features
-* GPU Renderer using NVIDIA OptiX 7
-* Full Spectral Rendering (Monte Carlo Spectral Sampling)\
-  (For RGB resources, RGB->Spectrum conversion is performed using Meng-Simon's method \[Meng2015\])
-* RGB Rendering (built by default)
+## 特性
+* 基于 NVIDIA OptiX 7 的 GPU 渲染器
+* 全光谱渲染（蒙特卡洛光谱采样）\
+  （对于 RGB 资源，使用 Meng-Simon 方法进行 RGB->光谱转换 \[Meng2015\]）
+* RGB 渲染（默认构建模式）
 * BSDFs
-    * Ideal Diffuse (Lambert) BRDF
-    * Ideal Specular BRDF/BSDF
-    * Microfacet (GGX) BRDF/BSDF
-    * Fresnel-blended Lambertian BSDF
-    * UE4- or Frostbite-like BRDF \[Karis2013, Lagarde2014\]\
-      Parameters can be specified using UE4 style (base color, roughness/metallic) or old style (diffuse, specular, glossiness).
-    * Mixed BSDF
-* Shader Node System
-* Bump Mapping (Normal Map / Height Map)
-* Alpha Texture
-* Light Source Types
-    * Area (Polygonal) Light
-    * Point Light
-    * Image Based Environmental Light
-* Camera Types
-    * Perspective Camera with Depth of Field (thin-lens model)
-    * Environment (Equirectangular) Camera
-* Geometry Instancing
-* Light Transport Algorithms
-    * Path Tracing \[Kajiya1986\] with MIS
-    * Light Tracing
-    * Light Vertex Cache Bidirectional Path Tracing (LVC-BPT) \[Davidovi&#269;2014\]
-* Correct handling of non-symmetric scattering due to shading normals \[Veach1997\]
+    * 理想漫反射 (Lambert) BRDF
+    * 理想镜面反射 BRDF/BSDF
+    * 微表面 (GGX) BRDF/BSDF
+    * 菲涅尔混合朗伯 BSDF
+    * 类 UE4 或 Frostbite 风格的 BRDF \[Karis2013, Lagarde2014\]\
+      参数可以使用 UE4 风格（基础颜色、粗糙度/金属度）或传统风格（漫反射、高光、光泽度）来指定。
+    * 混合 BSDF
+* 着色器节点系统
+* 凹凸贴图（法线贴图 / 高度贴图）
+* Alpha 纹理
+* 光源类型
+    * 面积（多边形）光源
+    * 点光源
+    * 基于图像的环境光
+* 相机类型
+    * 具有景深效果的透视相机（薄透镜模型）
+    * 环境（等距柱状投影）相机
+* 几何体实例化
+* 光线传输算法
+    * 路径追踪 \[Kajiya1986\] 结合 MIS
+    * 光线追踪
+    * 光顶点缓存双向路径追踪 (LVC-BPT) \[Davidovi&#269;2014\]
+* 正确处理由着色法线引起的非对称散射 \[Veach1997\]
 
-## 構成要素 / Components
-* libVLR - Renderer Library based on OptiX\
-  CのAPIを定義しています。\
-  Exposes C API.
-* vlrcpp.h - Single file wrapper for C++\
-  std::shared_ptrを用いてオブジェクトの寿命管理を自動化しています。\
-  Automatically manages lifetime of objects via std::shared_ptr.
-* HostProgram - A program to demonstrate how to use VLR
+## 组件
+* libVLR - 基于 OptiX 的渲染器库\
+  提供 C 语言 API。
+* vlrcpp.h - C++ 单文件封装\
+  通过 std::shared_ptr 自动管理对象生命周期。
+* HostProgram - 演示 VLR 使用方法的示例程序
 
 ## API
-Code Example using VLRCpp (C++ wrapper)
+使用 VLRCpp（C++ 封装）的代码示例
 
 ```cpp
 using namespace vlr;
 
 ContextRef context = Context::create(cuContext, enableLogging, maxCallableDepth);
 
-// Construct a scene by defining meshes and materials.
+// 通过定义网格和材质来构建场景
 
 SceneRef scene = context->createScene();
 
@@ -78,7 +75,7 @@ TriangleMeshSurfaceNodeRef mesh = context->createTriangleMeshSurfaceNode("My Mes
         ShaderNodeRef nodeNormalAlpha = context->createShaderNode("Image2DTexture");
         nodeNormalAlpha->set("image", imgNormalAlpha);
 
-        // You can flexibly define a material by connecting shader nodes.
+        // 可以通过连接着色器节点来灵活定义材质
         SurfaceMaterialRef mat = context->createSurfaceMaterial("Matte");
         mat->set("albedo", nodeAlbedo->getPlug(VLRShaderNodePlugType_Spectrum, 0));
 
@@ -87,21 +84,21 @@ TriangleMeshSurfaceNodeRef mesh = context->createTriangleMeshSurfaceNode("My Mes
 
         uint32_t matGroup[] = { 0, 1, 2, 0, 2, 3 };
         mesh->addMaterialGroup(matGroup, lengthof(matGroup), mat, 
-                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Normal3D, 0), // normal map
-                               nodeTangent->getPlug(VLRShaderNodePlugType_Vector3D, 0), // tangent
-                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Alpha, 0)); // alpha map
+                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Normal3D, 0), // 法线贴图
+                               nodeTangent->getPlug(VLRShaderNodePlugType_Vector3D, 0), // 切线
+                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Alpha, 0)); // Alpha 贴图
     }
 
     // ...
 }
 
-// You can construct a scene graph with transforms
+// 可以通过变换构建场景图
 InternalNodeRef transformNode = context->createInternalNode("trf A");
 transformNode->setTransform(context->createStaticTransform(scale(2.0f)));
 transformNode->addChild(mesh);
 scene->addChild(transformNode);
 
-// Setup a camera
+// 设置相机
 CameraRef camera = context->createCamera("Perspective");
 camera->set("position", Point3D(0, 1.5f, 6.0f));
 camera->set("aspect", (float)renderTargetSizeX / renderTargetSizeY);
@@ -109,43 +106,40 @@ camera->set("sensitivity", 1.0f);
 camera->set("fovy", 40 * M_PI / 180);
 camera->set("lens radius", 0.0f);
 
-// Setup the output buffer (OpenGL buffer can also be attached)
+// 设置输出缓冲区（也可以绑定 OpenGL 缓冲区）
 context->bindOutputBuffer(1024, 1024, 0);
 
-// Let's render the scene!
+// 开始渲染场景！
 context->setScene(scene);
 context->render(cuStream, camera, enableDenoiser, 1, firstFrame, &numAccumFrames);
 ```
 
-## TODO
-- [ ] Make the rendering properly asynchronous.
-- [ ] Python Binding
-- [ ] Simple Scene Editor
-- [ ] Compile shader node at runtime using NVRTC to remove overhead of callable programs.
+## 待办事项
+- [ ] 使渲染过程真正异步化。
+- [ ] Python 绑定
+- [ ] 简单的场景编辑器
+- [ ] 使用 NVRTC 在运行时编译着色器节点，以消除可调用程序的开销。
 
-## 動作環境 / Confirmed Environment
-現状以下の環境で動作を確認しています。\
-I've confirmed that the program runs correctly on the following environment.
+## 已验证的运行环境
+目前已在以下环境中确认程序可以正常运行。
 
 * Windows 10 (21H2) & Visual Studio 2022 (17.2.4)
 * Core i9-9900K, 32GB, RTX 3080 10GB
-* NVIDIA Driver 516.40 (Note that versions around 510-512 had several OptiX issues.)
+* NVIDIA 驱动 516.40（注意：510-512 版本存在若干 OptiX 相关问题。）
 
-動作させるにあたっては以下のライブラリが必要です。\
-It requires the following libraries.
+运行本程序需要以下库：
 
 * libVLR
     * CUDA 12.5
-    * OptiX 8.0.0 (requires Maxwell or later generation NVIDIA GPU)
+    * OptiX 8.0.0（需要 Maxwell 或更新架构的 NVIDIA GPU）
 * Host Program
     * OpenEXR 3.1
     * assimp 5.0
 
-## 注意 / Note
-モデルデータやテクスチャーを読み込むシーンファイルがありますが、それらアセットはリポジトリには含まれていません。\
-There are some scene files loading model data and textures, but those assets are NOT included in this repository.
+## 注意事项
+项目中包含一些加载模型数据和纹理的场景文件，但这些资产并**未**包含在本仓库中。
 
-## 参考文献 / References
+## 参考文献
 [Davidovi&#269;2014] "Progressive Light Transport Simulation on the GPU: Survey and Improvements"\
 [Kajiya1986] "THE RENDERING EQUATION"\
 [Karis2013] "Real Shading in Unreal Engine 4"\
@@ -153,29 +147,29 @@ There are some scene files loading model data and textures, but those assets are
 [Meng2015] "Physically Meaningful Rendering using Tristimulus Colours"\
 [Veach1997] "ROBUST MONTE CARLO METHODS FOR LIGHT TRANSPORT SIMULATION"
 
-## ギャラリー / Gallery
+## 画廊
 <img src = "gallery/CornellBox_var.jpg" width = "512px" alt = "CornellBox_var.jpg"><br>
-A variant of the famous Cornell box scene. The left box has anisotropic BRDF with circular tangents along its local Y axis (roughness is smoother along tangent, rougher along bitangent).
+经典 Cornell Box 场景的变体。左侧盒子具有各向异性 BRDF，沿其局部 Y 轴具有环形切线（沿切线方向更光滑，沿副切线方向更粗糙）。
 <br><br>
 <img src = "gallery/UE4LikeBRDF.jpg" width = "512px" alt = "UE4LikeBRDF.jpg"><br>
-An object with UE4- or Frostbite 3.0-like BRDF (Textures are exported from Substance Painter) illuminated by an area light and an environmental light.
+一个具有类 UE4 或 Frostbite 3.0 风格 BRDF 的物体（纹理从 Substance Painter 导出），由面积光源和环境光照明。
 
-Model: Substance Painter\
-IBL image: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
+模型: Substance Painter\
+IBL 图像: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
 <br><br>
 <img src = "gallery/dispersive_caustics_closeup.jpg" width = "512px" alt = "dispersive_caustics_closeup.jpg"><br>
-Caustics generated from Stanford bunny model illuminated by directional area light.\
-The renderer uses spectral rendering for this.
+由方向性面积光源照射 Stanford Bunny 模型产生的焦散效果。\
+渲染器在此处使用了光谱渲染。
 
-Model: [Stanford Bunny](http://graphics.stanford.edu/data/3Dscanrep/)
+模型: [Stanford Bunny](http://graphics.stanford.edu/data/3Dscanrep/)
 <br><br>
 <img src = "gallery/Rungholt_view1.jpg" width = "768px" alt = "Rungholt_view1.jpg"><br>
 <img src = "gallery/Rungholt_view2.jpg" width = "768px" alt = "Rungholt_view2.jpg"><br>
-Rungholt model illuminated by outdoor environment light.
+由室外环境光照明的 Rungholt 模型。
 
-Model: Rungholt from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)\
-IBL image 1: [Direct HDR Capture of the Sun and Sky](https://vgl.ict.usc.edu/Data/SkyProbes/)\
-IBL image 2: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
+模型: Rungholt，来自 Morgan McGuire 的 [Computer Graphics Archive](https://casual-effects.com/data)\
+IBL 图像 1: [Direct HDR Capture of the Sun and Sky](https://vgl.ict.usc.edu/Data/SkyProbes/)\
+IBL 图像 2: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
 
 ----
 2022 [@Shocker_0x15](https://twitter.com/Shocker_0x15)
