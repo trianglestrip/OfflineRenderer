@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\gitProject\OfflineRenderer\build\CMakeFiles\4e8bd523fa4815a23294b10bbc873494\shadow_trace.optixir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\gitProject\OfflineRenderer\build\CMakeFiles\4e8bd523fa4815a23294b10bbc873494\trace_rays.optixir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\gitProject\OfflineRenderer\build\CMakeFiles\c5036a6c0ac308422bb9dd0489ecfb34\nvcuda_optix_trace_rays.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\gitProject\OfflineRenderer\libVLRW\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\gitProject\OfflineRenderer\build\libVLRW\CMakeFiles\nvcuda_optix_trace_rays" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{F4A64F7A-F8EA-34E0-A3BD-7F3DB5D6A4C2}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

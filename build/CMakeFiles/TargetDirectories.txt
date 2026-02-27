@@ -1,0 +1,6 @@
+D:/gitProject/OfflineRenderer/build/CMakeFiles/ALL_BUILD.dir
+D:/gitProject/OfflineRenderer/build/CMakeFiles/ZERO_CHECK.dir
+D:/gitProject/OfflineRenderer/build/libVLRW/CMakeFiles/nvcuda_ptx_ray_gen.dir
+D:/gitProject/OfflineRenderer/build/libVLRW/CMakeFiles/nvcuda_optix_trace_rays.dir
+D:/gitProject/OfflineRenderer/build/libVLRW/CMakeFiles/libVLRW.dir
+D:/gitProject/OfflineRenderer/build/libVLRW/test/CMakeFiles/cornell_box_test.dir
