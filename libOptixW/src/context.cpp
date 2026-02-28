@@ -1,6 +1,7 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
 #include <optix.h>
+#include <optix_function_table_definition.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
 #include <stdexcept>
@@ -39,12 +40,12 @@ public:
     OptixDeviceContext optixContext = nullptr;
     CUcontext cudaContext = nullptr;
     
-    Impl() {
+    void initialize(int deviceId) {
         // Initialize CUDA
         CUDA_CHECK(cudaFree(0));
         
         CUdevice device;
-        cuDeviceGet(&device, 0);
+        cuDeviceGet(&device, deviceId);
         
         char deviceName[256];
         cuDeviceGetName(deviceName, sizeof(deviceName), device);
@@ -81,12 +82,11 @@ public:
     }
 };
 
-Context::Context() : m_impl(std::make_unique<Impl>()) {}
-Context::~Context() = default;
-
-std::unique_ptr<Context> Context::create() {
-    return std::unique_ptr<Context>(new Context());
+Context::Context(int deviceId) : m_impl(std::make_unique<Impl>()) {
+    m_impl->initialize(deviceId);
 }
+
+Context::~Context() = default;
 
 Scene* Context::createScene() {
     return new Scene();

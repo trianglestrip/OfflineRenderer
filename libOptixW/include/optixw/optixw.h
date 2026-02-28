@@ -81,6 +81,8 @@ public:
     
     // Add materials
     uint32_t addMaterial(const MaterialData& material);
+    uint32_t addLambertianMaterial(const RGB& albedo);
+    uint32_t addEmissiveMaterial(const RGB& emission);
     
     // Add lights
     void addPointLight(const PointLight& light);

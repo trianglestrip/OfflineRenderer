@@ -19,6 +19,7 @@
         pipelineCompileOptions.numAttributeValues = 0;
         pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
         pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
+        pipelineCompileOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
         
         char log[2048];
         size_t logSize = sizeof(log);
@@ -124,7 +125,7 @@
         RaygenRecord raygenRecord;
         OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG, &raygenRecord));
         
-        CUDA_CHECK(cudaMalloc(&sbt.raygenRecord, sizeof(RaygenRecord)));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.raygenRecord), sizeof(RaygenRecord)));
         CUDA_CHECK(cudaMemcpy(
             (void*)sbt.raygenRecord,
             &raygenRecord,
@@ -139,7 +140,7 @@
         MissRecord missRecord;
         OPTIX_CHECK(optixSbtRecordPackHeader(missPG, &missRecord));
         
-        CUDA_CHECK(cudaMalloc(&sbt.missRecordBase, sizeof(MissRecord)));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.missRecordBase), sizeof(MissRecord)));
         CUDA_CHECK(cudaMemcpy(
             (void*)sbt.missRecordBase,
             &missRecord,
@@ -156,7 +157,7 @@
         HitgroupRecord hitgroupRecord;
         OPTIX_CHECK(optixSbtRecordPackHeader(hitgroupPG, &hitgroupRecord));
         
-        CUDA_CHECK(cudaMalloc(&sbt.hitgroupRecordBase, sizeof(HitgroupRecord)));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.hitgroupRecordBase), sizeof(HitgroupRecord)));
         CUDA_CHECK(cudaMemcpy(
             (void*)sbt.hitgroupRecordBase,
             &hitgroupRecord,

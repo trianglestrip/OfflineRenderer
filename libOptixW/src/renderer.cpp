@@ -1,6 +1,7 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
 #include "scene_internal.h"
+#include "cpu_vector_math.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -8,29 +9,6 @@
 #include <vector>
 #include <stdexcept>
 #include <iostream>
-#include <cmath>
-
-// CPU-side vector math helpers
-static inline float3 make_float3(float x, float y, float z) {
-    float3 v; v.x = x; v.y = y; v.z = z; return v;
-}
-
-static inline float3 operator-(const float3& a, const float3& b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static inline float3 cross(const float3& a, const float3& b) {
-    return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
-
-static inline float dot(const float3& a, const float3& b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static inline float3 normalize(const float3& v) {
-    float invLen = 1.0f / sqrtf(dot(v, v));
-    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
-}
 
 #define OPTIX_CHECK(call)                                                      \
     do {                                                                       \
@@ -138,11 +116,11 @@ public:
         if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
         if (d_launchParams) cudaFree((void*)d_launchParams);
         
-        CUDA_CHECK(cudaMalloc(&d_rayPool, rayPoolSize));
-        CUDA_CHECK(cudaMalloc(&d_activeIndices, indicesSize));
-        CUDA_CHECK(cudaMalloc(&d_accumBuffer, accumSize));
-        CUDA_CHECK(cudaMalloc(&d_hitBuffer, hitBufferSize));
-        CUDA_CHECK(cudaMalloc(&d_launchParams, 4096));  // Large enough for any params
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rayPool), rayPoolSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_activeIndices), indicesSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_accumBuffer), accumSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hitBuffer), hitBufferSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_launchParams), 4096));  // Large enough for any params
         
         // Initialize accumulation buffer to zero
         CUDA_CHECK(cudaMemset((void*)d_accumBuffer, 0, accumSize));
@@ -183,14 +161,14 @@ void Renderer::render(
     
     // Setup camera data
     CameraData camData;
-    camData.position = make_float3(camera.position.r, camera.position.g, camera.position.b);
-    
-    float3 target = make_float3(camera.target.r, camera.target.g, camera.target.b);
-    camData.forward = normalize(target - camData.position);
-    
-    float3 up = make_float3(camera.up.r, camera.up.g, camera.up.b);
-    camData.right = normalize(cross(camData.forward, up));
-    camData.up = cross(camData.right, camData.forward);
+    camData.position = cpu_math::make_float3(camera.position.r, camera.position.g, camera.position.b);
+
+    float3 target = cpu_math::make_float3(camera.target.r, camera.target.g, camera.target.b);
+    camData.forward = cpu_math::normalize(cpu_math::operator-(target, camData.position));
+
+    float3 up = cpu_math::make_float3(camera.up.r, camera.up.g, camera.up.b);
+    camData.right = cpu_math::normalize(cpu_math::cross(camData.forward, up));
+    camData.up = cpu_math::cross(camData.right, camData.forward);
     
     camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
     camData.aspect = camera.aspect;

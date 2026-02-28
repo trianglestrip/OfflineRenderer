@@ -26,16 +26,23 @@
         // Wavefront rendering loop
         const uint32_t maxDepth = 8;
         for (uint32_t depth = 0; depth < maxDepth && numActive > 0; ++depth) {
-            // Setup launch parameters
+            // Setup launch parameters (defined in kernels/launch_params.cuh)
             struct LaunchParams {
+                // Scene data
                 OptixTraversableHandle traversable;
-                RayState* rayPool;
-                uint32_t* activeIndices;
-                HitInfo* hitBuffer;
                 const float* vertices;
                 const uint32_t* indices;
                 const uint32_t* triangleMaterialIds;
+                
+                // Ray pool and buffers
+                RayState* rayPool;
+                uint32_t* activeIndices;
+                HitInfo* hitBuffer;
+                
+                // Camera
                 CameraData camera;
+                
+                // Render settings
                 uint32_t width;
                 uint32_t height;
                 uint32_t sampleIndex;
@@ -44,12 +51,12 @@
             
             LaunchParams params;
             params.traversable = gasHandle;
-            params.rayPool = reinterpret_cast<RayState*>(d_rayPool);
-            params.activeIndices = reinterpret_cast<uint32_t*>(d_activeIndices);
-            params.hitBuffer = reinterpret_cast<HitInfo*>(d_hitBuffer);
             params.vertices = reinterpret_cast<const float*>(d_vertices);
             params.indices = reinterpret_cast<const uint32_t*>(d_indices);
             params.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
+            params.rayPool = reinterpret_cast<RayState*>(d_rayPool);
+            params.activeIndices = reinterpret_cast<uint32_t*>(d_activeIndices);
+            params.hitBuffer = reinterpret_cast<HitInfo*>(d_hitBuffer);
             params.camera = camera;
             params.width = width;
             params.height = height;

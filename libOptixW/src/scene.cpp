@@ -1,5 +1,7 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
+#include "scene_internal.h"
+#include "cpu_vector_math.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -97,23 +99,31 @@ void Scene::addTriangleMesh(
     }
 }
 
-uint32_t Scene::addMaterial(MaterialType type, const RGB& albedo) {
+uint32_t Scene::addMaterial(const MaterialData& material) {
+    m_impl->materials.push_back(material);
+    return m_impl->materials.size() - 1;
+}
+
+// Helper method for simple materials
+static MaterialData createLambertianMaterial(const RGB& albedo) {
     MaterialData mat;
-    mat.albedo = make_float3(albedo.r, albedo.g, albedo.b);
-    mat.emission = make_float3(0, 0, 0);
+    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
+    mat.emission = cpu_math::make_float3(0, 0, 0);
     mat.roughness = 1.0f;
     mat.metallic = 0.0f;
     mat.ior = 1.5f;
-    mat.type = static_cast<uint32_t>(type);
-    
-    m_impl->materials.push_back(mat);
-    return m_impl->materials.size() - 1;
+    mat.type = static_cast<uint32_t>(MaterialType::Lambertian);
+    return mat;
+}
+
+uint32_t Scene::addLambertianMaterial(const RGB& albedo) {
+    return addMaterial(createLambertianMaterial(albedo));
 }
 
 uint32_t Scene::addEmissiveMaterial(const RGB& emission) {
     MaterialData mat;
-    mat.albedo = make_float3(0, 0, 0);
-    mat.emission = make_float3(emission.r, emission.g, emission.b);
+    mat.albedo = cpu_math::make_float3(0, 0, 0);
+    mat.emission = cpu_math::make_float3(emission.r, emission.g, emission.b);
     mat.roughness = 0.0f;
     mat.metallic = 0.0f;
     mat.ior = 1.0f;
@@ -125,24 +135,24 @@ uint32_t Scene::addEmissiveMaterial(const RGB& emission) {
 
 void Scene::addPointLight(const PointLight& light) {
     PointLightData data;
-    data.position = make_float3(light.position.r, light.position.g, light.position.b);
-    data.intensity = make_float3(light.intensity.r, light.intensity.g, light.intensity.b);
+    data.position = cpu_math::make_float3(light.position.r, light.position.g, light.position.b);
+    data.intensity = cpu_math::make_float3(light.intensity.r, light.intensity.g, light.intensity.b);
     m_impl->pointLights.push_back(data);
 }
 
 void Scene::addAreaLight(const AreaLight& light) {
     AreaLightData data;
-    data.position = make_float3(light.position.r, light.position.g, light.position.b);
-    data.normal = make_float3(light.normal.r, light.normal.g, light.normal.b);
-    data.emission = make_float3(light.emission.r, light.emission.g, light.emission.b);
+    data.position = cpu_math::make_float3(light.position.r, light.position.g, light.position.b);
+    data.normal = cpu_math::make_float3(light.normal.r, light.normal.g, light.normal.b);
+    data.emission = cpu_math::make_float3(light.emission.r, light.emission.g, light.emission.b);
     data.width = light.width;
     data.height = light.height;
     data.doubleSided = light.doubleSided ? 1 : 0;
     
     // Compute tangent and bitangent
-    float3 up = fabsf(data.normal.y) < 0.9f ? make_float3(0, 1, 0) : make_float3(1, 0, 0);
-    data.tangent = normalize(cross(up, data.normal));
-    data.bitangent = cross(data.normal, data.tangent);
+    float3 up = fabsf(data.normal.y) < 0.9f ? cpu_math::make_float3(0, 1, 0) : cpu_math::make_float3(1, 0, 0);
+    data.tangent = cpu_math::normalize(cpu_math::cross(up, data.normal));
+    data.bitangent = cpu_math::cross(data.normal, data.tangent);
     
     m_impl->areaLights.push_back(data);
 }
@@ -161,10 +171,10 @@ void Scene::finalize() {
     size_t materialsSize = m_impl->materials.size() * sizeof(MaterialData);
     size_t triangleMaterialIdsSize = m_impl->triangleMaterialIds.size() * sizeof(uint32_t);
     
-    CUDA_CHECK(cudaMalloc(&m_impl->d_vertices, verticesSize));
-    CUDA_CHECK(cudaMalloc(&m_impl->d_indices, indicesSize));
-    CUDA_CHECK(cudaMalloc(&m_impl->d_materials, materialsSize));
-    CUDA_CHECK(cudaMalloc(&m_impl->d_triangleMaterialIds, triangleMaterialIdsSize));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_vertices), verticesSize));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_indices), indicesSize));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_materials), materialsSize));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_triangleMaterialIds), triangleMaterialIdsSize));
     
     CUDA_CHECK(cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(), 
                           verticesSize, cudaMemcpyHostToDevice));
@@ -217,8 +227,8 @@ void Scene::finalize() {
     
     // Allocate temporary and output buffers
     CUdeviceptr d_tempBuffer;
-    CUDA_CHECK(cudaMalloc(&d_tempBuffer, gasBufferSizes.tempSizeInBytes));
-    CUDA_CHECK(cudaMalloc(&m_impl->d_gasOutputBuffer, gasBufferSizes.outputSizeInBytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tempBuffer), gasBufferSizes.tempSizeInBytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_gasOutputBuffer), gasBufferSizes.outputSizeInBytes));
     
     // Build GAS
     OPTIX_CHECK(optixAccelBuild(

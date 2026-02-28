@@ -81,6 +81,7 @@ foreach(KERNEL ${OPTIXW_KERNELS})
             --gpu-architecture=compute_75
             --use_fast_math
             -std=c++20
+            -Xcompiler=/wd4819
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL}
         COMMENT "Compiling ${KERNEL} to PTX"
     )

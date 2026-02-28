@@ -2,23 +2,12 @@
 #include <cuda_runtime.h>
 #include <optixw/types.h>
 #include "vector_math.cuh"
+#include "launch_params.cuh"
 
 using namespace optixw;
 
-// Launch parameters for ray tracing
-struct TraceParams {
-    OptixTraversableHandle traversable;
-    RayState* rayPool;
-    uint32_t* activeIndices;
-    HitInfo* hitBuffer;
-    const float* vertices;
-    const uint32_t* indices;
-    const uint32_t* triangleMaterialIds;
-    uint32_t numActive;
-};
-
 extern "C" {
-    __constant__ TraceParams params;
+    __constant__ LaunchParams params;
 }
 
 // Raygen program for tracing

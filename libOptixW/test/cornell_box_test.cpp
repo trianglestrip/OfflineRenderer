@@ -3,6 +3,7 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
+#include <algorithm>
 
 using namespace optixw;
 
@@ -27,9 +28,9 @@ void savePPM(const char* filename, const RGB* image, uint32_t width, uint32_t he
 // Build Cornell Box scene
 void buildCornellBox(Scene* scene) {
     // Create materials
-    uint32_t whiteMat = scene->addMaterial(MaterialType::Matte, RGB(0.75f, 0.75f, 0.75f));
-    uint32_t redMat = scene->addMaterial(MaterialType::Matte, RGB(0.75f, 0.25f, 0.25f));
-    uint32_t blueMat = scene->addMaterial(MaterialType::Matte, RGB(0.25f, 0.25f, 0.75f));
+    uint32_t whiteMat = scene->addLambertianMaterial(RGB(0.75f, 0.75f, 0.75f));
+    uint32_t redMat = scene->addLambertianMaterial(RGB(0.75f, 0.25f, 0.25f));
+    uint32_t blueMat = scene->addLambertianMaterial(RGB(0.25f, 0.25f, 0.75f));
     uint32_t lightMat = scene->addEmissiveMaterial(RGB(10.0f, 10.0f, 10.0f));
     
     // Room dimensions
@@ -130,15 +131,15 @@ int main() {
         std::cout << "=== libOptixW Cornell Box Test ===" << std::endl;
         
         // Create context
-        auto context = Context::create();
+        Context context;
         
         // Create scene
-        Scene* scene = context->createScene();
+        Scene* scene = context.createScene();
         buildCornellBox(scene);
         scene->finalize();
         
         // Create renderer
-        Renderer* renderer = context->createRenderer();
+        Renderer* renderer = context.createRenderer();
         
         // Setup camera
         Camera camera;
