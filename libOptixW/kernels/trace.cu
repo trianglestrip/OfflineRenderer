@@ -53,6 +53,8 @@ extern "C" __global__ void __raygen__trace() {
 // Closest hit program
 extern "C" __global__ void __closesthit__trace() {
     const uint32_t idx = optixGetLaunchIndex().x;
+    if (idx >= params.numActive) return;
+    
     const uint32_t rayIndex = params.activeIndices[idx];
     
     // Get hit information

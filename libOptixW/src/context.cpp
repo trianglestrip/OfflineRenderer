@@ -1,4 +1,5 @@
 #include "optixw/optixw.h"
+#include "optixw/types.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -6,6 +7,9 @@
 #include <iostream>
 
 namespace optixw {
+
+// Global OptiX context for access from other modules
+OptixDeviceContext g_optixContext = nullptr;
 
 // Helper macros
 #define OPTIX_CHECK(call)                                                      \
@@ -61,6 +65,8 @@ public:
         options.logCallbackLevel = 4;
         
         OPTIX_CHECK(optixDeviceContextCreate(cudaContext, &options, &optixContext));
+        
+        g_optixContext = optixContext;  // Store global reference
         
         std::cout << "[OptixW] OptiX context created" << std::endl;
     }

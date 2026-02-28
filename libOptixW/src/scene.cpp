@@ -1,11 +1,37 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
 #include <optix.h>
+#include <optix_stubs.h>
 #include <cuda_runtime.h>
 #include <vector>
 #include <stdexcept>
+#include <iostream>
+
+#define OPTIX_CHECK(call)                                                      \
+    do {                                                                       \
+        OptixResult res = call;                                                \
+        if (res != OPTIX_SUCCESS) {                                            \
+            throw std::runtime_error(                                          \
+                std::string("OptiX call failed: ") +                           \
+                optixGetErrorName(res) + " (" +                                \
+                optixGetErrorString(res) + ")");                               \
+        }                                                                      \
+    } while (0)
+
+#define CUDA_CHECK(call)                                                       \
+    do {                                                                       \
+        cudaError_t error = call;                                              \
+        if (error != cudaSuccess) {                                            \
+            throw std::runtime_error(                                          \
+                std::string("CUDA call failed: ") +                            \
+                cudaGetErrorString(error));                                    \
+        }                                                                      \
+    } while (0)
 
 namespace optixw {
+
+// Forward declare context impl to get OptiX context
+extern OptixDeviceContext g_optixContext;
 
 // Scene implementation
 class Scene::Impl {
@@ -33,6 +59,12 @@ public:
     CUdeviceptr d_triangleMaterialIds = 0;
     
     bool finalized = false;
+    
+    OptixTraversableHandle getGasHandle() const { return gasHandle; }
+    CUdeviceptr getVerticesPtr() const { return d_vertices; }
+    CUdeviceptr getIndicesPtr() const { return d_indices; }
+    CUdeviceptr getMaterialsPtr() const { return d_materials; }
+    CUdeviceptr getTriangleMaterialIdsPtr() const { return d_triangleMaterialIds; }
     
     ~Impl() {
         if (d_gasOutputBuffer) cudaFree((void*)d_gasOutputBuffer);
@@ -118,26 +150,122 @@ void Scene::addAreaLight(const AreaLight& light) {
 void Scene::finalize() {
     if (m_impl->finalized) return;
     
+    std::cout << "[Scene] Finalizing scene..." << std::endl;
+    std::cout << "[Scene] Vertices: " << m_impl->vertices.size() / 3 << std::endl;
+    std::cout << "[Scene] Triangles: " << m_impl->indices.size() / 3 << std::endl;
+    std::cout << "[Scene] Materials: " << m_impl->materials.size() << std::endl;
+    
     // Upload geometry to GPU
     size_t verticesSize = m_impl->vertices.size() * sizeof(float);
     size_t indicesSize = m_impl->indices.size() * sizeof(uint32_t);
     size_t materialsSize = m_impl->materials.size() * sizeof(MaterialData);
     size_t triangleMaterialIdsSize = m_impl->triangleMaterialIds.size() * sizeof(uint32_t);
     
-    cudaMalloc(&m_impl->d_vertices, verticesSize);
-    cudaMalloc(&m_impl->d_indices, indicesSize);
-    cudaMalloc(&m_impl->d_materials, materialsSize);
-    cudaMalloc(&m_impl->d_triangleMaterialIds, triangleMaterialIdsSize);
+    CUDA_CHECK(cudaMalloc(&m_impl->d_vertices, verticesSize));
+    CUDA_CHECK(cudaMalloc(&m_impl->d_indices, indicesSize));
+    CUDA_CHECK(cudaMalloc(&m_impl->d_materials, materialsSize));
+    CUDA_CHECK(cudaMalloc(&m_impl->d_triangleMaterialIds, triangleMaterialIdsSize));
     
-    cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(), verticesSize, cudaMemcpyHostToDevice);
-    cudaMemcpy((void*)m_impl->d_indices, m_impl->indices.data(), indicesSize, cudaMemcpyHostToDevice);
-    cudaMemcpy((void*)m_impl->d_materials, m_impl->materials.data(), materialsSize, cudaMemcpyHostToDevice);
-    cudaMemcpy((void*)m_impl->d_triangleMaterialIds, m_impl->triangleMaterialIds.data(), 
-               triangleMaterialIdsSize, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(), 
+                          verticesSize, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_indices, m_impl->indices.data(), 
+                          indicesSize, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_materials, m_impl->materials.data(), 
+                          materialsSize, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_triangleMaterialIds, m_impl->triangleMaterialIds.data(), 
+                          triangleMaterialIdsSize, cudaMemcpyHostToDevice));
     
-    // TODO: Build OptiX GAS (next step)
+    // Build OptiX GAS (Geometry Acceleration Structure)
+    std::cout << "[Scene] Building OptiX GAS..." << std::endl;
+    
+    // Setup build input
+    OptixBuildInput buildInput = {};
+    buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    
+    OptixBuildInputTriangleArray& triangleArray = buildInput.triangleArray;
+    triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    triangleArray.vertexStrideInBytes = sizeof(float) * 3;
+    triangleArray.numVertices = m_impl->vertices.size() / 3;
+    triangleArray.vertexBuffers = &m_impl->d_vertices;
+    
+    triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+    triangleArray.indexStrideInBytes = sizeof(uint32_t) * 3;
+    triangleArray.numIndexTriplets = m_impl->indices.size() / 3;
+    triangleArray.indexBuffer = m_impl->d_indices;
+    
+    uint32_t buildFlags = OPTIX_GEOMETRY_FLAG_NONE;
+    triangleArray.flags = &buildFlags;
+    triangleArray.numSbtRecords = 1;
+    
+    // Compute memory requirements
+    OptixAccelBuildOptions accelOptions = {};
+    accelOptions.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+    accelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
+    
+    OptixAccelBufferSizes gasBufferSizes;
+    OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        g_optixContext,
+        &accelOptions,
+        &buildInput,
+        1,  // num build inputs
+        &gasBufferSizes
+    ));
+    
+    std::cout << "[Scene] GAS buffer sizes:" << std::endl;
+    std::cout << "  Temp: " << gasBufferSizes.tempSizeInBytes / 1024 << " KB" << std::endl;
+    std::cout << "  Output: " << gasBufferSizes.outputSizeInBytes / 1024 << " KB" << std::endl;
+    
+    // Allocate temporary and output buffers
+    CUdeviceptr d_tempBuffer;
+    CUDA_CHECK(cudaMalloc(&d_tempBuffer, gasBufferSizes.tempSizeInBytes));
+    CUDA_CHECK(cudaMalloc(&m_impl->d_gasOutputBuffer, gasBufferSizes.outputSizeInBytes));
+    
+    // Build GAS
+    OPTIX_CHECK(optixAccelBuild(
+        g_optixContext,
+        0,  // CUDA stream
+        &accelOptions,
+        &buildInput,
+        1,  // num build inputs
+        d_tempBuffer,
+        gasBufferSizes.tempSizeInBytes,
+        m_impl->d_gasOutputBuffer,
+        gasBufferSizes.outputSizeInBytes,
+        &m_impl->gasHandle,
+        nullptr,  // emitted property list
+        0         // num emitted properties
+    ));
+    
+    CUDA_CHECK(cudaFree((void*)d_tempBuffer));
+    
+    std::cout << "[Scene] GAS built successfully, handle: " << m_impl->gasHandle << std::endl;
     
     m_impl->finalized = true;
+}
+
+} // namespace optixw
+
+// Implement accessor
+namespace optixw {
+
+OptixTraversableHandle SceneAccessor::getGasHandle(Scene* scene) {
+    return scene->m_impl->getGasHandle();
+}
+
+CUdeviceptr SceneAccessor::getVerticesPtr(Scene* scene) {
+    return scene->m_impl->getVerticesPtr();
+}
+
+CUdeviceptr SceneAccessor::getIndicesPtr(Scene* scene) {
+    return scene->m_impl->getIndicesPtr();
+}
+
+CUdeviceptr SceneAccessor::getMaterialsPtr(Scene* scene) {
+    return scene->m_impl->getMaterialsPtr();
+}
+
+CUdeviceptr SceneAccessor::getTriangleMaterialIdsPtr(Scene* scene) {
+    return scene->m_impl->getTriangleMaterialIdsPtr();
 }
 
 } // namespace optixw

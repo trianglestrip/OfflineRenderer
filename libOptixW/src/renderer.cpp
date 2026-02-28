@@ -1,28 +1,103 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
+#include "scene_internal.h"
+#include <optix.h>
+#include <optix_stubs.h>
 #include <cuda_runtime.h>
+#include <fstream>
+#include <vector>
 #include <stdexcept>
 #include <iostream>
 
+#define OPTIX_CHECK(call)                                                      \
+    do {                                                                       \
+        OptixResult res = call;                                                \
+        if (res != OPTIX_SUCCESS) {                                            \
+            throw std::runtime_error(                                          \
+                std::string("OptiX call failed: ") +                           \
+                optixGetErrorName(res) + " (" +                                \
+                optixGetErrorString(res) + ")");                               \
+        }                                                                      \
+    } while (0)
+
+#define CUDA_CHECK(call)                                                       \
+    do {                                                                       \
+        cudaError_t error = call;                                              \
+        if (error != cudaSuccess) {                                            \
+            throw std::runtime_error(                                          \
+                std::string("CUDA call failed: ") +                            \
+                cudaGetErrorString(error));                                    \
+        }                                                                      \
+    } while (0)
+
 namespace optixw {
+
+// Forward declarations
+extern OptixDeviceContext g_optixContext;
+
+// Load PTX file
+static std::vector<char> loadPTX(const char* filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error(std::string("Failed to open PTX file: ") + filename);
+    }
+    
+    file.seekg(0, std::ios::end);
+    size_t size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    
+    std::vector<char> data(size);
+    file.read(data.data(), size);
+    
+    return data;
+}
 
 // Renderer implementation
 class Renderer::Impl {
 public:
+    // OptiX pipeline
+    OptixModule traceModule = nullptr;
+    OptixPipeline pipeline = nullptr;
+    OptixProgramGroup raygenPG = nullptr;
+    OptixProgramGroup missPG = nullptr;
+    OptixProgramGroup hitgroupPG = nullptr;
+    OptixShaderBindingTable sbt = {};
+    
     // Wavefront queues
     CUdeviceptr d_rayPool = 0;
     CUdeviceptr d_activeIndices = 0;
     CUdeviceptr d_accumBuffer = 0;
+    CUdeviceptr d_hitBuffer = 0;
+    
+    // Launch parameters
+    CUdeviceptr d_launchParams = 0;
     
     uint32_t numPixels = 0;
     uint32_t maxRays = 0;
     
+    bool pipelineCreated = false;
+    
+#include "renderer_pipeline.inl"
+#include "renderer_loop.inl"
+    
     Impl() {}
     
     ~Impl() {
+        if (raygenPG) optixProgramGroupDestroy(raygenPG);
+        if (missPG) optixProgramGroupDestroy(missPG);
+        if (hitgroupPG) optixProgramGroupDestroy(hitgroupPG);
+        if (pipeline) optixPipelineDestroy(pipeline);
+        if (traceModule) optixModuleDestroy(traceModule);
+        
+        if (sbt.raygenRecord) cudaFree((void*)sbt.raygenRecord);
+        if (sbt.missRecordBase) cudaFree((void*)sbt.missRecordBase);
+        if (sbt.hitgroupRecordBase) cudaFree((void*)sbt.hitgroupRecordBase);
+        
         if (d_rayPool) cudaFree((void*)d_rayPool);
         if (d_activeIndices) cudaFree((void*)d_activeIndices);
         if (d_accumBuffer) cudaFree((void*)d_accumBuffer);
+        if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
+        if (d_launchParams) cudaFree((void*)d_launchParams);
     }
     
     void allocateBuffers(uint32_t width, uint32_t height) {
@@ -32,13 +107,22 @@ public:
         size_t rayPoolSize = maxRays * sizeof(RayState);
         size_t indicesSize = maxRays * sizeof(uint32_t);
         size_t accumSize = numPixels * sizeof(float3);
+        size_t hitBufferSize = maxRays * sizeof(HitInfo);
         
-        cudaMalloc(&d_rayPool, rayPoolSize);
-        cudaMalloc(&d_activeIndices, indicesSize);
-        cudaMalloc(&d_accumBuffer, accumSize);
+        if (d_rayPool) cudaFree((void*)d_rayPool);
+        if (d_activeIndices) cudaFree((void*)d_activeIndices);
+        if (d_accumBuffer) cudaFree((void*)d_accumBuffer);
+        if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
+        if (d_launchParams) cudaFree((void*)d_launchParams);
+        
+        CUDA_CHECK(cudaMalloc(&d_rayPool, rayPoolSize));
+        CUDA_CHECK(cudaMalloc(&d_activeIndices, indicesSize));
+        CUDA_CHECK(cudaMalloc(&d_accumBuffer, accumSize));
+        CUDA_CHECK(cudaMalloc(&d_hitBuffer, hitBufferSize));
+        CUDA_CHECK(cudaMalloc(&d_launchParams, 4096));  // Large enough for any params
         
         // Initialize accumulation buffer to zero
-        cudaMemset((void*)d_accumBuffer, 0, accumSize);
+        CUDA_CHECK(cudaMemset((void*)d_accumBuffer, 0, accumSize));
         
         std::cout << "[Renderer] Allocated buffers: " 
                   << numPixels << " pixels, " 
@@ -66,22 +150,72 @@ void Renderer::render(
               << width << "x" << height 
               << " @ " << spp << " spp" << std::endl;
     
+    // Create pipeline if needed
+    if (!m_impl->pipelineCreated) {
+        m_impl->createPipeline();
+    }
+    
     // Allocate buffers
     m_impl->allocateBuffers(width, height);
     
-    // TODO: Implement wavefront rendering loop
-    //  1. Generate primary rays (ray_gen kernel)
-    //  2. Trace rays (OptiX)
-    //  3. Shade hits (shade kernel)
-    //  4. Compact active rays
-    //  5. Repeat until all rays terminated
+    // Setup camera data
+    CameraData camData;
+    camData.position = make_float3(camera.position.r, camera.position.g, camera.position.b);
     
-    // For now, just clear the output buffer
-    for (uint32_t i = 0; i < width * height; ++i) {
-        outputBuffer[i] = RGB(0.5f, 0.5f, 0.5f);  // Gray placeholder
+    float3 target = make_float3(camera.target.r, camera.target.g, camera.target.b);
+    camData.forward = normalize(target - camData.position);
+    
+    float3 up = make_float3(camera.up.r, camera.up.g, camera.up.b);
+    camData.right = normalize(cross(camData.forward, up));
+    camData.up = cross(camData.right, camData.forward);
+    
+    camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
+    camData.aspect = camera.aspect;
+    
+    // Get scene data
+    OptixTraversableHandle gasHandle = SceneAccessor::getGasHandle(scene);
+    CUdeviceptr d_vertices = SceneAccessor::getVerticesPtr(scene);
+    CUdeviceptr d_indices = SceneAccessor::getIndicesPtr(scene);
+    CUdeviceptr d_triangleMaterialIds = SceneAccessor::getTriangleMaterialIdsPtr(scene);
+    
+    std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
+    
+    // Render samples
+    for (uint32_t sample = 0; sample < spp; ++sample) {
+        std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
+        
+        m_impl->renderSample(
+            gasHandle,
+            d_vertices,
+            d_indices,
+            d_triangleMaterialIds,
+            camData,
+            width,
+            height,
+            sample
+        );
     }
     
-    std::cout << "[Renderer] Render complete (placeholder)" << std::endl;
+    std::cout << std::endl;
+    
+    // Download result
+    std::vector<float3> accumBuffer(m_impl->numPixels);
+    CUDA_CHECK(cudaMemcpy(
+        accumBuffer.data(),
+        (void*)m_impl->d_accumBuffer,
+        m_impl->numPixels * sizeof(float3),
+        cudaMemcpyDeviceToHost
+    ));
+    
+    // Average and copy to output
+    float invSpp = 1.0f / spp;
+    for (uint32_t i = 0; i < m_impl->numPixels; ++i) {
+        outputBuffer[i].r = accumBuffer[i].x * invSpp;
+        outputBuffer[i].g = accumBuffer[i].y * invSpp;
+        outputBuffer[i].b = accumBuffer[i].z * invSpp;
+    }
+    
+    std::cout << "[Renderer] Render complete" << std::endl;
 }
 
 } // namespace optixw
