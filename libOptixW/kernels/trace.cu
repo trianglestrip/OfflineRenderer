@@ -38,9 +38,15 @@ extern "C" __global__ void __raygen__trace() {
         ray.direction = rayDir;
         ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
         ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+        ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+        ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
+        ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
+        ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
         ray.pixelIndex = rayIndex;
         ray.depth = 0;
         ray.stage = RayState::Trace;
+        ray.terminateAfterShadow = 0;
+        ray.insideMedium = 0;
         ray.seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
         ray.tMin = 0.001f;
         ray.tMax = 1e20f;
@@ -63,11 +69,31 @@ extern "C" __global__ void __raygen__trace() {
         hitFlag  // payload
     );
     
-    if (hitFlag) {
+    if (ray.stage == RayState::Shadow) {
+        if (!hitFlag) {
+            ray.radiance = ray.radiance + ray.pendingDirect;
+        }
+        ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+
+        if (ray.terminateAfterShadow) {
+            ray.terminateAfterShadow = 0;
+            ray.stage = RayState::Terminated;
+            return;
+        }
+
+        // Restore next bounce path state after shadow visibility test.
+        ray.origin = ray.nextOrigin;
+        ray.direction = ray.nextDirection;
+        ray.throughput = ray.nextThroughput;
+        ray.terminateAfterShadow = 0;
+        ray.tMin = 0.001f;
+        ray.tMax = 1e20f;
+        ray.stage = RayState::Trace;
+    } else if (hitFlag) {
         ray.stage = RayState::Shade;
     } else {
-        // Miss: accumulate background color and terminate
-        ray.radiance = ray.radiance + ray.throughput * make_float3(0.0f, 0.0f, 0.0f);
+        // Miss: accumulate environment radiance and terminate
+        ray.radiance = ray.radiance + ray.throughput * params.environmentRadiance;
         ray.stage = RayState::Terminated;
         // Write to accumulation buffer
         params.rayPool[rayIndex].radiance = ray.radiance;
@@ -81,6 +107,12 @@ extern "C" __global__ void __closesthit__trace() {
     
     const uint32_t rayIndex = params.activeIndices[idx];
     
+    RayState& ray = params.rayPool[rayIndex];
+    if (ray.stage == RayState::Shadow) {
+        optixSetPayload_0(1);
+        return;
+    }
+
     // Get hit information
     float t = optixGetRayTmax();
     float3 origin = optixGetWorldRayOrigin();
@@ -113,12 +145,9 @@ extern "C" __global__ void __closesthit__trace() {
     // Compute geometric normal
     float3 e1 = v1 - v0;
     float3 e2 = v2 - v0;
-    float3 normal = normalize(cross(e1, e2));
-    
-    // Flip normal if needed
-    if (dot(normal, direction) > 0.0f) {
-        normal = -normal;
-    }
+    float3 geometricNormal = normalize(cross(e1, e2));
+    uint32_t frontFace = dot(geometricNormal, direction) < 0.0f ? 1u : 0u;
+    float3 normal = frontFace ? geometricNormal : -geometricNormal;
     
     // Store hit information
     HitInfo& hit = params.hitBuffer[rayIndex];
@@ -127,6 +156,7 @@ extern "C" __global__ void __closesthit__trace() {
     hit.texCoord = make_float2(0, 0);  // TODO: compute barycentric UVs
     hit.materialId = params.triangleMaterialIds[primIdx];
     hit.primIndex = primIdx;
+    hit.frontFace = frontFace;
     
     // Set payload to indicate hit
     optixSetPayload_0(1);

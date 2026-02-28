@@ -4,7 +4,7 @@
         std::cout << "[Renderer] Creating OptiX pipeline..." << std::endl;
         
         // Load PTX
-        std::vector<char> tracePTX = loadPTX("ptx/trace.ptx");
+        std::vector<char> tracePTX = loadPTX("trace.ptx");
         
         // Create module
         OptixModuleCompileOptions moduleCompileOptions = {};
@@ -112,9 +112,26 @@
         
         // Build SBT
         buildSBT();
+        createWavefrontKernels();
 
         pipelineCreated = true;
         std::cout << "[Renderer] Pipeline created successfully" << std::endl;
+    }
+
+    void createWavefrontKernels() {
+        const std::string shadeCubin = findCubinPath("shade.cubin").string();
+        CU_CHECK(cuModuleLoad(&shadeModule, shadeCubin.c_str()));
+        CU_CHECK(cuModuleGetFunction(&shadeKernel, shadeModule, "shade"));
+
+        const std::string compactCubin = findCubinPath("compact.cubin").string();
+        CU_CHECK(cuModuleLoad(&compactModule, compactCubin.c_str()));
+        CU_CHECK(cuModuleGetFunction(&compactKernel, compactModule, "compact"));
+
+        const std::string scaleCubin = findCubinPath("scale.cubin").string();
+        CU_CHECK(cuModuleLoad(&scaleModule, scaleCubin.c_str()));
+        CU_CHECK(cuModuleGetFunction(&scaleKernel, scaleModule, "scale_to_float4"));
+
+        std::cout << "[Renderer] Wavefront kernels loaded" << std::endl;
     }
     
     void buildSBT() {

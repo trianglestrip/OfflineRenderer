@@ -8,6 +8,14 @@
         uint32_t height,
         uint32_t sampleIndex)
     {
+        if (numMaterials == 0 || d_materials == 0) {
+            std::cout << "[Warning] No materials available for shading" << std::endl;
+            return;
+        }
+
+        // Each sample must restart path state from primary rays.
+        CUDA_CHECK(cudaMemset((void*)d_rayPool, 0, maxRays * sizeof(RayState)));
+
         // Initialize active rays (all pixels)
         std::vector<uint32_t> activeIndices(numPixels);
         for (uint32_t i = 0; i < numPixels; ++i) {
@@ -21,51 +29,34 @@
             cudaMemcpyHostToDevice
         ));
         
+        CUdeviceptr activeIn = d_activeIndices;
+        CUdeviceptr activeOut = d_compactIndices;
         uint32_t numActive = numPixels;
         
-        // Wavefront rendering loop
+        // Wavefront rendering loop.
+        // Shadow visibility uses extra trace stages, so allocate more iteration budget.
         const uint32_t maxDepth = 8;
-        for (uint32_t depth = 0; depth < maxDepth && numActive > 0; ++depth) {
-            // Setup launch parameters (defined in kernels/launch_params.cuh)
-            struct LaunchParams {
-                // Scene data
-                OptixTraversableHandle traversable;
-                const float* vertices;
-                const uint32_t* indices;
-                const uint32_t* triangleMaterialIds;
-                
-                // Ray pool and buffers
-                RayState* rayPool;
-                uint32_t* activeIndices;
-                HitInfo* hitBuffer;
-                
-                // Camera
-                CameraData camera;
-                
-                // Render settings
-                uint32_t width;
-                uint32_t height;
-                uint32_t sampleIndex;
-                uint32_t numActive;
-            };
-            
-            LaunchParams params;
-            params.traversable = gasHandle;
-            params.vertices = reinterpret_cast<const float*>(d_vertices);
-            params.indices = reinterpret_cast<const uint32_t*>(d_indices);
-            params.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
-            params.rayPool = reinterpret_cast<RayState*>(d_rayPool);
-            params.activeIndices = reinterpret_cast<uint32_t*>(d_activeIndices);
-            params.hitBuffer = reinterpret_cast<HitInfo*>(d_hitBuffer);
-            params.camera = camera;
-            params.width = width;
-            params.height = height;
-            params.sampleIndex = sampleIndex;
-            params.numActive = numActive;
+        const uint32_t maxIterations = maxDepth * 2;
+        const uint32_t blockSize = 256;
+        for (uint32_t depth = 0; depth < maxIterations && numActive > 0; ++depth) {
+            LaunchParams launchParams = {};
+            launchParams.traversable = gasHandle;
+            launchParams.vertices = reinterpret_cast<const float*>(d_vertices);
+            launchParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
+            launchParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
+            launchParams.rayPool = reinterpret_cast<RayState*>(d_rayPool);
+            launchParams.activeIndices = reinterpret_cast<uint32_t*>(activeIn);
+            launchParams.hitBuffer = reinterpret_cast<HitInfo*>(d_hitBuffer);
+            launchParams.camera = camera;
+            launchParams.width = width;
+            launchParams.height = height;
+            launchParams.sampleIndex = sampleIndex;
+            launchParams.numActive = numActive;
+            launchParams.environmentRadiance = environmentRadiance;
             
             CUDA_CHECK(cudaMemcpy(
                 (void*)d_launchParams,
-                &params,
+                &launchParams,
                 sizeof(LaunchParams),
                 cudaMemcpyHostToDevice
             ));
@@ -81,123 +72,62 @@
                 1,
                 1
             ));
-            
-            CUDA_CHECK(cudaDeviceSynchronize());
-            
-            // Shade on CPU (temporary simple implementation)
-            {
-                // Skip shading if no materials (safety check)
-                if (numMaterials == 0 || d_materials == 0) {
-                    std::cout << "[Warning] No materials available for shading" << std::endl;
-                    break;
-                }
-                
-                std::vector<RayState> rayStates(numPixels);
-                std::vector<HitInfo> hitInfos(numPixels);
-                std::vector<MaterialData> materials(numMaterials);
-                std::vector<float3> accumBuffer(numPixels);
-                
-                CUDA_CHECK(cudaMemcpy(
-                    rayStates.data(),
-                    (void*)d_rayPool,
-                    numPixels * sizeof(RayState),
-                    cudaMemcpyDeviceToHost
-                ));
-                
-                CUDA_CHECK(cudaMemcpy(
-                    hitInfos.data(),
-                    (void*)d_hitBuffer,
-                    numPixels * sizeof(HitInfo),
-                    cudaMemcpyDeviceToHost
-                ));
-                
-                CUDA_CHECK(cudaMemcpy(
-                    materials.data(),
-                    (void*)d_materials,
-                    numMaterials * sizeof(MaterialData),
-                    cudaMemcpyDeviceToHost
-                ));
-                
-                CUDA_CHECK(cudaMemcpy(
-                    accumBuffer.data(),
-                    (void*)d_accumBuffer,
-                    numPixels * sizeof(float3),
-                    cudaMemcpyDeviceToHost
-                ));
-                
-                // Simple shading: check for emissive materials
-                for (uint32_t idx = 0; idx < numActive; ++idx) {
-                    uint32_t rayIndex = activeIndices[idx];
-                    RayState& ray = rayStates[rayIndex];
-                    
-                    if (ray.stage == RayState::Shade) {
-                        const HitInfo& hit = hitInfos[rayIndex];
-                        const MaterialData& mat = materials[hit.materialId];
-                        
-                        // Check if emissive
-                        bool isEmissive = (mat.emission.x > 0.0f || mat.emission.y > 0.0f || mat.emission.z > 0.0f);
-                        
-                        if (isEmissive) {
-                            // Accumulate emission
-                            ray.radiance.x += ray.throughput.x * mat.emission.x;
-                            ray.radiance.y += ray.throughput.y * mat.emission.y;
-                            ray.radiance.z += ray.throughput.z * mat.emission.z;
-                            
-                            accumBuffer[ray.pixelIndex] = ray.radiance;
-                            ray.stage = RayState::Terminated;
-                        } else {
-                            // For non-emissive, set to albedo * 0.5 (ambient lighting approximation)
-                            accumBuffer[ray.pixelIndex].x = mat.albedo.x * 0.5f;
-                            accumBuffer[ray.pixelIndex].y = mat.albedo.y * 0.5f;
-                            accumBuffer[ray.pixelIndex].z = mat.albedo.z * 0.5f;
-                            ray.stage = RayState::Terminated;
-                        }
-                    }
-                }
-                
-                // Upload back
-                CUDA_CHECK(cudaMemcpy(
-                    (void*)d_rayPool,
-                    rayStates.data(),
-                    numPixels * sizeof(RayState),
-                    cudaMemcpyHostToDevice
-                ));
-                
-                CUDA_CHECK(cudaMemcpy(
-                    (void*)d_accumBuffer,
-                    accumBuffer.data(),
-                    numPixels * sizeof(float3),
-                    cudaMemcpyHostToDevice
-                ));
-            }
-            
-            // Compact active rays (simple version: just count non-terminated rays)
-            {
-                std::vector<RayState> rayStates(numPixels);
-                CUDA_CHECK(cudaMemcpy(
-                    rayStates.data(),
-                    (void*)d_rayPool,
-                    numPixels * sizeof(RayState),
-                    cudaMemcpyDeviceToHost
-                ));
-                
-                activeIndices.clear();
-                for (uint32_t i = 0; i < numPixels; ++i) {
-                    if (rayStates[i].stage == RayState::Trace) {
-                        activeIndices.push_back(i);
-                    }
-                }
-                
-                numActive = activeIndices.size();
-                
-                if (numActive > 0) {
-                    CUDA_CHECK(cudaMemcpy(
-                        (void*)d_activeIndices,
-                        activeIndices.data(),
-                        numActive * sizeof(uint32_t),
-                        cudaMemcpyHostToDevice
-                    ));
-                }
-            }
+
+            const uint32_t numBlocks = (numActive + blockSize - 1) / blockSize;
+
+            ShadeKernelParams shadeParams = {};
+            shadeParams.rayPool = reinterpret_cast<RayState*>(d_rayPool);
+            shadeParams.activeIndices = reinterpret_cast<const uint32_t*>(activeIn);
+            shadeParams.hitBuffer = reinterpret_cast<const HitInfo*>(d_hitBuffer);
+            shadeParams.vertices = reinterpret_cast<const float*>(d_vertices);
+            shadeParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
+            shadeParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
+            shadeParams.materials = reinterpret_cast<const MaterialData*>(d_materials);
+            shadeParams.accumBuffer = reinterpret_cast<float3*>(d_accumBuffer);
+            shadeParams.numTriangles = numTriangles;
+            shadeParams.numMaterials = numMaterials;
+            shadeParams.numActive = numActive;
+
+            void* shadeArgs[] = { &shadeParams };
+            CU_CHECK(cuLaunchKernel(
+                shadeKernel,
+                numBlocks, 1, 1,
+                blockSize, 1, 1,
+                0,
+                0,
+                shadeArgs,
+                nullptr
+            ));
+
+            CUDA_CHECK(cudaMemset((void*)d_compactCounter, 0, sizeof(uint32_t)));
+
+            CompactKernelParams compactParams = {};
+            compactParams.rayPool = reinterpret_cast<const RayState*>(d_rayPool);
+            compactParams.activeIndicesIn = reinterpret_cast<const uint32_t*>(activeIn);
+            compactParams.activeIndicesOut = reinterpret_cast<uint32_t*>(activeOut);
+            compactParams.counter = reinterpret_cast<uint32_t*>(d_compactCounter);
+            compactParams.numActive = numActive;
+
+            void* compactArgs[] = { &compactParams };
+            CU_CHECK(cuLaunchKernel(
+                compactKernel,
+                numBlocks, 1, 1,
+                blockSize, 1, 1,
+                0,
+                0,
+                compactArgs,
+                nullptr
+            ));
+
+            CUDA_CHECK(cudaMemcpy(
+                &numActive,
+                (void*)d_compactCounter,
+                sizeof(uint32_t),
+                cudaMemcpyDeviceToHost
+            ));
+
+            CUdeviceptr temp = activeIn;
+            activeIn = activeOut;
+            activeOut = temp;
         }
     }

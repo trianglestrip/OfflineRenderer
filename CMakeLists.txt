@@ -75,3 +75,7 @@ endfunction()
 # libOptixW: Wavefront Path Tracer wrapper for libVLR
 add_subdirectory(libOptixW)
 set_project_group("libOptixW" "libOptixW")
+
+# Top-level tests that consume libOptixW as an external library.
+add_subdirectory(test)
+set_project_group("Tests" "test")

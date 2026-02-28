@@ -9,8 +9,12 @@ namespace optixw {
 struct RayState {
     float3 origin;
     float3 direction;
-    float3 throughput;  // Path throughput (RGB for now)
+    float3 throughput;  // Path throughput
     float3 radiance;    // Accumulated radiance
+    float3 pendingDirect;    // Direct light contribution awaiting visibility test
+    float3 nextOrigin;       // Next-bounce path state stored while tracing shadow ray
+    float3 nextDirection;
+    float3 nextThroughput;
     
     uint32_t pixelIndex;
     uint32_t depth;
@@ -25,6 +29,8 @@ struct RayState {
         Terminated = 4
     };
     uint32_t stage;
+    uint32_t terminateAfterShadow;
+    uint32_t insideMedium;
     
     float tMin, tMax;
 };
@@ -36,16 +42,33 @@ struct HitInfo {
     float2 texCoord;
     uint32_t materialId;
     uint32_t primIndex;
+    uint32_t frontFace;
 };
 
-// Material data (simplified, will reference libVLR later)
+// Material payload mapped from libVLR surface material families.
 struct MaterialData {
-    float3 albedo;
+    float3 baseColor;
     float3 emission;
+    float3 specularColor;
+    float3 eta;
+    float3 k;
+
     float roughness;
+    float anisotropy;
+    float rotation;
+
     float metallic;
-    float ior;
+    float iorExt;
+    float iorInt;
+    float specularF0;
+    float glossiness;
+    float occlusion;
+    float emitterScale;
+
+    float3 emitterDirection;
     uint32_t type;  // MaterialType
+    uint32_t subMaterialIndices[4];
+    uint32_t numSubMaterials;
 };
 
 // Light data

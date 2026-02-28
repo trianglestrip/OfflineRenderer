@@ -10,46 +10,61 @@ namespace optixw {
 class Scene;
 class Renderer;
 
-// RGB color type
-struct RGB {
-    float r, g, b;
-    RGB() : r(0), g(0), b(0) {}
-    RGB(float r_, float g_, float b_) : r(r_), g(g_), b(b_) {}
+// 3D vector type for positions/directions
+struct Vec3 {
+    float x, y, z;
+    Vec3() : x(0), y(0), z(0) {}
+    Vec3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
 };
 
 // Camera parameters
 struct Camera {
-    RGB position;
-    RGB target;
-    RGB up;
+    Vec3 position;
+    Vec3 target;
+    Vec3 up;
     float fovY;
     float aspect;
 };
 
 // Point light
 struct PointLight {
-    RGB position;
-    RGB intensity;
+    Vec3 position;
+    Vec3 intensity;
 };
 
 // Area light
 struct AreaLight {
-    RGB position;
-    RGB normal;
-    RGB tangent;
-    RGB bitangent;
+    Vec3 position;
+    Vec3 normal;
+    Vec3 tangent;
+    Vec3 bitangent;
     float width;
     float height;
-    RGB emission;
+    Vec3 emission;
     bool doubleSided;
 };
 
 // Material type enum
 enum class MaterialType : uint32_t {
-    Lambertian = 0,
-    Emissive = 1,
-    Metal = 2,
-    Glass = 3
+    Matte = 0,
+    LambertianScattering = 1,
+    SpecularReflection = 2,
+    SpecularScattering = 3,
+    MicrofacetReflection = 4,
+    MicrofacetScattering = 5,
+    UE4 = 6,
+    OldStyle = 7,
+    DiffuseEmitter = 8,
+    DirectionalEmitter = 9,
+    PointEmitter = 10,
+    Multi = 11,
+    EnvironmentEmitter = 12,
+
+    // Backward-compatible aliases.
+    Lambertian = Matte,
+    Emissive = DiffuseEmitter,
+    Metal = MicrofacetReflection,
+    Glass = SpecularScattering
 };
 
 // Context: CUDA and OptiX device initialization
@@ -82,10 +97,26 @@ public:
     
     // Add materials
     uint32_t addMaterial(const MaterialData& material);
-    uint32_t addLambertianMaterial(const RGB& albedo);
-    uint32_t addEmissiveMaterial(const RGB& emission);
-    uint32_t addMetalMaterial(const RGB& albedo, float roughness);
-    uint32_t addGlassMaterial(const RGB& albedo, float ior);
+    uint32_t addMatteMaterial(const Vec3& albedo);
+    uint32_t addLambertianScatteringMaterial(const Vec3& coeff, float f0 = 0.04f);
+    uint32_t addSpecularReflectionMaterial(const Vec3& coeff, const Vec3& eta, const Vec3& k);
+    uint32_t addSpecularScatteringMaterial(const Vec3& coeff, float iorExt, float iorInt);
+    uint32_t addMicrofacetReflectionMaterial(
+        const Vec3& eta, const Vec3& k, float roughness, float anisotropy = 0.0f, float rotation = 0.0f);
+    uint32_t addMicrofacetScatteringMaterial(
+        const Vec3& coeff, float iorExt, float iorInt, float roughness, float anisotropy = 0.0f, float rotation = 0.0f);
+    uint32_t addUE4Material(const Vec3& baseColor, float occlusion, float roughness, float metallic);
+    uint32_t addOldStyleMaterial(const Vec3& diffuseColor, const Vec3& specularColor, float glossiness);
+    uint32_t addDiffuseEmitterMaterial(const Vec3& emittance, float scale = 1.0f);
+    uint32_t addDirectionalEmitterMaterial(const Vec3& emittance, float scale, const Vec3& direction);
+    uint32_t addPointEmitterMaterial(const Vec3& intensity, float scale = 1.0f);
+    uint32_t addMultiMaterial(std::span<const uint32_t> subMaterials);
+    uint32_t addEnvironmentEmitterMaterial(const Vec3& emittance, float scale = 1.0f);
+
+    uint32_t addLambertianMaterial(const Vec3& albedo);
+    uint32_t addEmissiveMaterial(const Vec3& emission);
+    uint32_t addMetalMaterial(const Vec3& albedo, float roughness);
+    uint32_t addGlassMaterial(const Vec3& albedo, float ior);
     
     // Add lights
     void addPointLight(const PointLight& light);
@@ -112,7 +143,7 @@ public:
     void render(
         Scene* scene,
         const Camera& camera,
-        RGB* outputBuffer,
+        Vec3* outputBuffer,
         uint32_t width,
         uint32_t height,
         uint32_t spp = 1,

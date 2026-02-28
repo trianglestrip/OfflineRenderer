@@ -4,21 +4,23 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "render_config.h"
 
 using namespace optixw;
 
 // Save image as PNG with gamma correction
-void savePNG(const char* filename, const RGB* image, uint32_t width, uint32_t height) {
+void savePNG(const char* filename, const Vec3* image, uint32_t width, uint32_t height) {
     std::vector<uint8_t> pixels(width * height * 3);
     
     for (uint32_t i = 0; i < width * height; ++i) {
         float gamma = 1.0f / 2.2f;
-        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].r, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(std::clamp(image[i].g, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(std::clamp(image[i].b, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].x, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(std::clamp(image[i].y, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(std::clamp(image[i].z, 0.0f, 1.0f), gamma) * 255);
     }
     
     stbi_write_png(filename, width, height, 3, pixels.data(), width * 3);
@@ -68,11 +70,11 @@ void createSphere(std::vector<float>& vertices, std::vector<uint32_t>& indices,
 // Features: checkerboard floor, red left wall, blue right wall, two glass spheres
 void buildCornellBoxVar(Scene* scene) {
     // Create materials
-    uint32_t whiteMat = scene->addLambertianMaterial(RGB(0.75f, 0.75f, 0.75f));
-    uint32_t redMat = scene->addLambertianMaterial(RGB(0.75f, 0.25f, 0.25f));
-    uint32_t blueMat = scene->addLambertianMaterial(RGB(0.25f, 0.25f, 0.75f));
-    uint32_t lightMat = scene->addEmissiveMaterial(RGB(30.0f, 30.0f, 30.0f));
-    uint32_t glassMat = scene->addGlassMaterial(RGB(0.999f, 0.999f, 0.999f), 2.42f);  // Diamond IOR
+    uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
+    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.75f, 0.25f, 0.25f));
+    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
+    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(12.0f, 12.0f, 12.0f));
+    uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 2.42f);  // Diamond IOR
     
     // Room dimensions (larger than standard Cornell Box)
     const float L = -1.5f, R = 1.5f;  // Left, Right
@@ -162,24 +164,24 @@ int main() {
         
         // Setup camera (from libVLR: position(0, 1.5, 6), looking at origin)
         Camera camera;
-        camera.position = RGB(0.0f, 1.5f, 6.0f);
-        camera.target = RGB(0.0f, 1.5f, 0.0f);
-        camera.up = RGB(0.0f, 1.0f, 0.0f);
+        camera.position = Vec3(0.0f, 1.5f, 6.0f);
+        camera.target = Vec3(0.0f, 1.5f, 0.0f);
+        camera.up = Vec3(0.0f, 1.0f, 0.0f);
         camera.fovY = 40.0f * 3.14159f / 180.0f;
         camera.aspect = 1.0f;
         
-        // Render
-        const uint32_t width = 512;
-        const uint32_t height = 512;
-        const uint32_t spp = 4;  // Reduced for testing
+        const RenderConfig cfg = render_config::load("cornell_box_var");
+        const uint32_t width = cfg.width;
+        const uint32_t height = cfg.height;
+        const uint32_t spp = cfg.spp;
         
         std::cout << "[Test] Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
         
-        std::vector<RGB> outputBuffer(width * height);
-        renderer->render(scene, camera, outputBuffer.data(), width, height, spp);
+        std::vector<Vec3> outputBuffer(width * height);
+        renderer->render(scene, camera, outputBuffer.data(), width, height, spp, true);
         
-        // Save to gallery folder
-        savePNG("../../../gallery/cornell_box_var.png", outputBuffer.data(), width, height);
+        const std::filesystem::path outputPath = render_config::resolveGalleryPath("cornell_box_var.png");
+        savePNG(outputPath.string().c_str(), outputBuffer.data(), width, height);
         
         std::cout << "[Test] Test completed successfully" << std::endl;
         

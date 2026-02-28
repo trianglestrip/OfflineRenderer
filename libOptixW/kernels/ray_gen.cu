@@ -56,10 +56,16 @@ extern "C" __global__ void __raygen__generate_primary() {
     ray.direction = rayDir;
     ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
     ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+    ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
     ray.pixelIndex = rayIndex;
     ray.depth = 0;
     ray.materialId = 0;
     ray.stage = RayState::Trace;
+    ray.terminateAfterShadow = 0;
+    ray.insideMedium = 0;
     ray.seed = seed;
     ray.tMin = 0.001f;
     ray.tMax = 1e20f;

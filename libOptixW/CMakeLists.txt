@@ -27,6 +27,8 @@ set(OPTIXW_SOURCES
 set(OPTIXW_HEADERS
     "include/optixw/optixw.h"
     "include/optixw/types.h"
+    "include/optixw/launch_params.h"
+    "include/optixw/wavefront_kernel_params.h"
 )
 
 # CUDA kernels (will compile to PTX)
@@ -35,6 +37,14 @@ set(OPTIXW_KERNELS
     "kernels/trace.cu"
     "kernels/shade.cu"
     "kernels/compact.cu"
+)
+
+# CUDA kernels that are launched via CUDA Driver API.
+# Build these to cubin to avoid PTX JIT/toolchain compatibility issues.
+set(OPTIXW_DRIVER_KERNELS
+    "kernels/shade.cu"
+    "kernels/compact.cu"
+    "kernels/scale.cu"
 )
 
 # Create static library
@@ -93,14 +103,43 @@ endforeach()
 add_custom_target(${TARGET_NAME}_ptx ALL DEPENDS ${PTX_FILES})
 add_dependencies(${TARGET_NAME} ${TARGET_NAME}_ptx)
 
+# Compile CUDA driver kernels to cubin
+foreach(KERNEL ${OPTIXW_DRIVER_KERNELS})
+    get_filename_component(KERNEL_NAME ${KERNEL} NAME_WE)
+    set(CUBIN_FILE "${CMAKE_BINARY_DIR}/cubin/${KERNEL_NAME}.cubin")
+
+    add_custom_command(
+        OUTPUT ${CUBIN_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/cubin"
+        COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}
+            -cubin
+            -o ${CUBIN_FILE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/include
+            -I${OptiX_INSTALL_DIR}/include
+            --gpu-architecture=sm_75
+            --use_fast_math
+            -std=c++20
+            -Xcompiler=/wd4819
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL}
+        COMMENT "Compiling ${KERNEL} to cubin"
+    )
+
+    list(APPEND CUBIN_FILES ${CUBIN_FILE})
+endforeach()
+
+add_custom_target(${TARGET_NAME}_cubin ALL DEPENDS ${CUBIN_FILES})
+add_dependencies(${TARGET_NAME} ${TARGET_NAME}_cubin)
+
 # Copy PTX files to runtime directory
 add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${TARGET_NAME}>/ptx"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_BINARY_DIR}/ptx"
         "$<TARGET_FILE_DIR:${TARGET_NAME}>/ptx"
-    COMMENT "Copying PTX files to runtime directory"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${TARGET_NAME}>/cubin"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/cubin"
+        "$<TARGET_FILE_DIR:${TARGET_NAME}>/cubin"
+    COMMENT "Copying PTX/CUBIN files to runtime directory"
 )
-
-# Test executable
-add_subdirectory(test)

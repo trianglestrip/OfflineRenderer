@@ -1,39 +1,42 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
 #include "scene_internal.h"
-#include "cpu_vector_math.h"
+#include "checks.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
 #include <vector>
-#include <stdexcept>
 #include <iostream>
-
-#define OPTIX_CHECK(call)                                                      \
-    do {                                                                       \
-        OptixResult res = call;                                                \
-        if (res != OPTIX_SUCCESS) {                                            \
-            throw std::runtime_error(                                          \
-                std::string("OptiX call failed: ") +                           \
-                optixGetErrorName(res) + " (" +                                \
-                optixGetErrorString(res) + ")");                               \
-        }                                                                      \
-    } while (0)
-
-#define CUDA_CHECK(call)                                                       \
-    do {                                                                       \
-        cudaError_t error = call;                                              \
-        if (error != cudaSuccess) {                                            \
-            throw std::runtime_error(                                          \
-                std::string("CUDA call failed: ") +                            \
-                cudaGetErrorString(error));                                    \
-        }                                                                      \
-    } while (0)
+#include <cmath>
 
 namespace optixw {
 
 // Forward declare context impl to get OptiX context
 extern OptixDeviceContext g_optixContext;
+
+namespace {
+
+inline float3 toFloat3(const Vec3& v) {
+    return make_float3(v.x, v.y, v.z);
+}
+
+inline float3 cross3(const float3& a, const float3& b) {
+    return make_float3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x);
+}
+
+inline float3 normalize3(const float3& v) {
+    const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (len2 <= 0.0f) {
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+    const float invLen = 1.0f / sqrtf(len2);
+    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
+}
+
+} // namespace
 
 // Scene implementation
 class Scene::Impl {
@@ -104,81 +107,205 @@ uint32_t Scene::addMaterial(const MaterialData& material) {
     return m_impl->materials.size() - 1;
 }
 
-// Helper method for simple materials
-static MaterialData createLambertianMaterial(const RGB& albedo) {
+static MaterialData createBaseMaterial() {
     MaterialData mat;
-    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
-    mat.emission = cpu_math::make_float3(0, 0, 0);
-    mat.roughness = 1.0f;
+    mat.baseColor = make_float3(1, 1, 1);
+    mat.emission = make_float3(0, 0, 0);
+    mat.specularColor = make_float3(0.04f, 0.04f, 0.04f);
+    mat.eta = make_float3(1.5f, 1.5f, 1.5f);
+    mat.k = make_float3(0.0f, 0.0f, 0.0f);
+    mat.roughness = 0.3f;
+    mat.anisotropy = 0.0f;
+    mat.rotation = 0.0f;
     mat.metallic = 0.0f;
-    mat.ior = 1.5f;
-    mat.type = static_cast<uint32_t>(MaterialType::Lambertian);
+    mat.iorExt = 1.0f;
+    mat.iorInt = 1.5f;
+    mat.specularF0 = 0.04f;
+    mat.glossiness = 0.5f;
+    mat.occlusion = 1.0f;
+    mat.emitterScale = 1.0f;
+    mat.emitterDirection = make_float3(0, 0, 1);
+    mat.type = static_cast<uint32_t>(MaterialType::Matte);
+    mat.subMaterialIndices[0] = 0;
+    mat.subMaterialIndices[1] = 0;
+    mat.subMaterialIndices[2] = 0;
+    mat.subMaterialIndices[3] = 0;
+    mat.numSubMaterials = 0;
     return mat;
 }
 
-uint32_t Scene::addLambertianMaterial(const RGB& albedo) {
-    return addMaterial(createLambertianMaterial(albedo));
+uint32_t Scene::addMatteMaterial(const Vec3& albedo) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(albedo);
+    mat.roughness = 1.0f;
+    mat.type = static_cast<uint32_t>(MaterialType::Matte);
+    return addMaterial(mat);
 }
 
-uint32_t Scene::addEmissiveMaterial(const RGB& emission) {
-    MaterialData mat;
-    mat.albedo = cpu_math::make_float3(0, 0, 0);
-    mat.emission = cpu_math::make_float3(emission.r, emission.g, emission.b);
+uint32_t Scene::addLambertianScatteringMaterial(const Vec3& coeff, float f0) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(coeff);
+    mat.specularF0 = f0;
+    mat.roughness = 1.0f;
+    mat.type = static_cast<uint32_t>(MaterialType::LambertianScattering);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addSpecularReflectionMaterial(const Vec3& coeff, const Vec3& eta, const Vec3& k) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(coeff);
+    mat.eta = toFloat3(eta);
+    mat.k = toFloat3(k);
     mat.roughness = 0.0f;
-    mat.metallic = 0.0f;
-    mat.ior = 1.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::Emissive);
-    
-    m_impl->materials.push_back(mat);
-    return m_impl->materials.size() - 1;
+    mat.type = static_cast<uint32_t>(MaterialType::SpecularReflection);
+    return addMaterial(mat);
 }
 
-uint32_t Scene::addMetalMaterial(const RGB& albedo, float roughness) {
-    MaterialData mat;
-    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
-    mat.emission = cpu_math::make_float3(0, 0, 0);
+uint32_t Scene::addSpecularScatteringMaterial(const Vec3& coeff, float iorExt, float iorInt) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(coeff);
+    mat.iorExt = iorExt;
+    mat.iorInt = iorInt;
+    mat.roughness = 0.0f;
+    mat.type = static_cast<uint32_t>(MaterialType::SpecularScattering);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addMicrofacetReflectionMaterial(
+    const Vec3& eta, const Vec3& k, float roughness, float anisotropy, float rotation) {
+    MaterialData mat = createBaseMaterial();
+    mat.eta = toFloat3(eta);
+    mat.k = toFloat3(k);
     mat.roughness = roughness;
-    mat.metallic = 1.0f;
-    mat.ior = 1.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::Metal);
-    
-    m_impl->materials.push_back(mat);
-    return m_impl->materials.size() - 1;
+    mat.anisotropy = anisotropy;
+    mat.rotation = rotation;
+    mat.type = static_cast<uint32_t>(MaterialType::MicrofacetReflection);
+    return addMaterial(mat);
 }
 
-uint32_t Scene::addGlassMaterial(const RGB& albedo, float ior) {
-    MaterialData mat;
-    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
-    mat.emission = cpu_math::make_float3(0, 0, 0);
-    mat.roughness = 0.0f;
-    mat.metallic = 0.0f;
-    mat.ior = ior;
-    mat.type = static_cast<uint32_t>(MaterialType::Glass);
-    
-    m_impl->materials.push_back(mat);
-    return m_impl->materials.size() - 1;
+uint32_t Scene::addMicrofacetScatteringMaterial(
+    const Vec3& coeff, float iorExt, float iorInt, float roughness, float anisotropy, float rotation) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(coeff);
+    mat.iorExt = iorExt;
+    mat.iorInt = iorInt;
+    mat.roughness = roughness;
+    mat.anisotropy = anisotropy;
+    mat.rotation = rotation;
+    mat.type = static_cast<uint32_t>(MaterialType::MicrofacetScattering);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addUE4Material(const Vec3& baseColor, float occlusion, float roughness, float metallic) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(baseColor);
+    mat.occlusion = occlusion;
+    mat.roughness = roughness;
+    mat.metallic = metallic;
+    mat.type = static_cast<uint32_t>(MaterialType::UE4);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addOldStyleMaterial(const Vec3& diffuseColor, const Vec3& specularColor, float glossiness) {
+    MaterialData mat = createBaseMaterial();
+    mat.baseColor = toFloat3(diffuseColor);
+    mat.specularColor = toFloat3(specularColor);
+    mat.glossiness = glossiness;
+    mat.type = static_cast<uint32_t>(MaterialType::OldStyle);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addDiffuseEmitterMaterial(const Vec3& emittance, float scale) {
+    MaterialData mat = createBaseMaterial();
+    mat.emission = toFloat3(emittance);
+    mat.emitterScale = scale;
+    mat.type = static_cast<uint32_t>(MaterialType::DiffuseEmitter);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addDirectionalEmitterMaterial(const Vec3& emittance, float scale, const Vec3& direction) {
+    MaterialData mat = createBaseMaterial();
+    mat.emission = toFloat3(emittance);
+    mat.emitterScale = scale;
+    mat.emitterDirection = normalize3(toFloat3(direction));
+    mat.type = static_cast<uint32_t>(MaterialType::DirectionalEmitter);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addPointEmitterMaterial(const Vec3& intensity, float scale) {
+    MaterialData mat = createBaseMaterial();
+    mat.emission = toFloat3(intensity);
+    mat.emitterScale = scale;
+    mat.type = static_cast<uint32_t>(MaterialType::PointEmitter);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addMultiMaterial(std::span<const uint32_t> subMaterials) {
+    MaterialData mat = createBaseMaterial();
+    mat.type = static_cast<uint32_t>(MaterialType::Multi);
+    uint32_t count = static_cast<uint32_t>(subMaterials.size());
+    if (count > 4) {
+        count = 4;
+    }
+    mat.numSubMaterials = count;
+    for (uint32_t i = 0; i < count; ++i) {
+        mat.subMaterialIndices[i] = subMaterials[i];
+    }
+    for (uint32_t i = count; i < 4; ++i) {
+        mat.subMaterialIndices[i] = 0;
+    }
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addEnvironmentEmitterMaterial(const Vec3& emittance, float scale) {
+    MaterialData mat = createBaseMaterial();
+    mat.emission = toFloat3(emittance);
+    mat.emitterScale = scale;
+    mat.type = static_cast<uint32_t>(MaterialType::EnvironmentEmitter);
+    return addMaterial(mat);
+}
+
+uint32_t Scene::addLambertianMaterial(const Vec3& albedo) {
+    return addMatteMaterial(albedo);
+}
+
+uint32_t Scene::addEmissiveMaterial(const Vec3& emission) {
+    return addDiffuseEmitterMaterial(emission, 1.0f);
+}
+
+uint32_t Scene::addMetalMaterial(const Vec3& albedo, float roughness) {
+    const Vec3 eta(0.17f, 0.35f, 1.5f);
+    const Vec3 kk(3.1f, 2.7f, 1.9f);
+    uint32_t matId = addMicrofacetReflectionMaterial(eta, kk, roughness, 0.0f, 0.0f);
+    MaterialData& mat = m_impl->materials[matId];
+    mat.baseColor = toFloat3(albedo);
+    return matId;
+}
+
+uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
+    return addSpecularScatteringMaterial(albedo, 1.0f, ior);
 }
 
 void Scene::addPointLight(const PointLight& light) {
     PointLightData data;
-    data.position = cpu_math::make_float3(light.position.r, light.position.g, light.position.b);
-    data.intensity = cpu_math::make_float3(light.intensity.r, light.intensity.g, light.intensity.b);
+    data.position = toFloat3(light.position);
+    data.intensity = toFloat3(light.intensity);
     m_impl->pointLights.push_back(data);
 }
 
 void Scene::addAreaLight(const AreaLight& light) {
     AreaLightData data;
-    data.position = cpu_math::make_float3(light.position.r, light.position.g, light.position.b);
-    data.normal = cpu_math::make_float3(light.normal.r, light.normal.g, light.normal.b);
-    data.emission = cpu_math::make_float3(light.emission.r, light.emission.g, light.emission.b);
+    data.position = toFloat3(light.position);
+    data.normal = toFloat3(light.normal);
+    data.emission = toFloat3(light.emission);
     data.width = light.width;
     data.height = light.height;
     data.doubleSided = light.doubleSided ? 1 : 0;
     
     // Compute tangent and bitangent
-    float3 up = fabsf(data.normal.y) < 0.9f ? cpu_math::make_float3(0, 1, 0) : cpu_math::make_float3(1, 0, 0);
-    data.tangent = cpu_math::normalize(cpu_math::cross(up, data.normal));
-    data.bitangent = cpu_math::cross(data.normal, data.tangent);
+    float3 up = fabsf(data.normal.y) < 0.9f ? make_float3(0, 1, 0) : make_float3(1, 0, 0);
+    data.tangent = normalize3(cross3(up, data.normal));
+    data.bitangent = cross3(data.normal, data.tangent);
     
     m_impl->areaLights.push_back(data);
 }
@@ -306,6 +433,20 @@ CUdeviceptr SceneAccessor::getTriangleMaterialIdsPtr(Scene* scene) {
 
 uint32_t SceneAccessor::getMaterialCount(Scene* scene) {
     return static_cast<uint32_t>(scene->m_impl->materials.size());
+}
+
+uint32_t SceneAccessor::getTriangleCount(Scene* scene) {
+    return static_cast<uint32_t>(scene->m_impl->indices.size() / 3);
+}
+
+Vec3 SceneAccessor::getEnvironmentRadiance(Scene* scene) {
+    for (const MaterialData& mat : scene->m_impl->materials) {
+        if (mat.type == static_cast<uint32_t>(MaterialType::EnvironmentEmitter)) {
+            const float scale = (mat.emitterScale > 0.0f) ? mat.emitterScale : 0.0f;
+            return Vec3(mat.emission.x * scale, mat.emission.y * scale, mat.emission.z * scale);
+        }
+    }
+    return Vec3(0.0f, 0.0f, 0.0f);
 }
 
 } // namespace optixw

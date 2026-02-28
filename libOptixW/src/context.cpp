@@ -1,38 +1,16 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
+#include "checks.h"
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
-#include <stdexcept>
 #include <iostream>
 
 namespace optixw {
 
 // Global OptiX context for access from other modules
 OptixDeviceContext g_optixContext = nullptr;
-
-// Helper macros
-#define OPTIX_CHECK(call)                                                      \
-    do {                                                                       \
-        OptixResult res = call;                                                \
-        if (res != OPTIX_SUCCESS) {                                            \
-            throw std::runtime_error(                                          \
-                std::string("OptiX call failed: ") +                           \
-                optixGetErrorName(res) + " (" +                                \
-                optixGetErrorString(res) + ")");                               \
-        }                                                                      \
-    } while (0)
-
-#define CUDA_CHECK(call)                                                       \
-    do {                                                                       \
-        cudaError_t error = call;                                              \
-        if (error != cudaSuccess) {                                            \
-            throw std::runtime_error(                                          \
-                std::string("CUDA call failed: ") +                            \
-                cudaGetErrorString(error));                                    \
-        }                                                                      \
-    } while (0)
 
 // Context implementation
 class Context::Impl {
@@ -45,14 +23,14 @@ public:
         CUDA_CHECK(cudaFree(0));
         
         CUdevice device;
-        cuDeviceGet(&device, deviceId);
+        CU_CHECK(cuDeviceGet(&device, deviceId));
         
         char deviceName[256];
-        cuDeviceGetName(deviceName, sizeof(deviceName), device);
+        CU_CHECK(cuDeviceGetName(deviceName, sizeof(deviceName), device));
         std::cout << "[OptixW] Using device: " << deviceName << std::endl;
         
         CUctxCreateParams params = {};
-        cuCtxCreate(&cudaContext, &params, 0, device);
+        CU_CHECK(cuCtxCreate(&cudaContext, &params, 0, device));
         
         // Initialize OptiX
         OPTIX_CHECK(optixInit());
