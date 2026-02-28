@@ -7,12 +7,14 @@ using namespace optixw;
 
 // Launch parameters for ray tracing
 struct TraceParams {
+    OptixTraversableHandle traversable;
     RayState* rayPool;
     uint32_t* activeIndices;
     HitInfo* hitBuffer;
     const float* vertices;
     const uint32_t* indices;
     const uint32_t* triangleMaterialIds;
+    uint32_t numActive;
 };
 
 extern "C" {
@@ -22,20 +24,21 @@ extern "C" {
 // Raygen program for tracing
 extern "C" __global__ void __raygen__trace() {
     const uint32_t idx = optixGetLaunchIndex().x;
-    const uint32_t rayIndex = params.activeIndices[idx];
+    if (idx >= params.numActive) return;
     
+    const uint32_t rayIndex = params.activeIndices[idx];
     RayState& ray = params.rayPool[rayIndex];
     
     // Trace ray using OptiX
     uint32_t hitFlag = 0;
     optixTrace(
-        optixGetPayloadTypeFromReservedSpaceOpaque(uint32_t),
+        params.traversable,
         ray.origin,
         ray.direction,
         ray.tMin,
         ray.tMax,
         0.0f,  // rayTime
-        OptixVisibilityMask(1),
+        OptixVisibilityMask(255),
         OPTIX_RAY_FLAG_NONE,
         0,  // SBT offset
         1,  // SBT stride

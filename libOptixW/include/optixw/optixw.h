@@ -10,6 +10,47 @@ namespace optixw {
 class Scene;
 class Renderer;
 
+// RGB color type
+struct RGB {
+    float r, g, b;
+    RGB() : r(0), g(0), b(0) {}
+    RGB(float r_, float g_, float b_) : r(r_), g(g_), b(b_) {}
+};
+
+// Camera parameters
+struct Camera {
+    RGB position;
+    RGB target;
+    RGB up;
+    float fovY;
+    float aspect;
+};
+
+// Point light
+struct PointLight {
+    RGB position;
+    RGB intensity;
+};
+
+// Area light
+struct AreaLight {
+    RGB position;
+    RGB normal;
+    RGB tangent;
+    RGB bitangent;
+    float width;
+    float height;
+    RGB emission;
+    bool doubleSided;
+};
+
+// Material type enum
+enum class MaterialType : uint32_t {
+    Lambertian = 0,
+    Emissive = 1,
+    Specular = 2
+};
+
 // Context: CUDA and OptiX device initialization
 class Context {
 public:

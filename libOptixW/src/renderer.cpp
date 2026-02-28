@@ -8,6 +8,29 @@
 #include <vector>
 #include <stdexcept>
 #include <iostream>
+#include <cmath>
+
+// CPU-side vector math helpers
+static inline float3 make_float3(float x, float y, float z) {
+    float3 v; v.x = x; v.y = y; v.z = z; return v;
+}
+
+static inline float3 operator-(const float3& a, const float3& b) {
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+static inline float3 cross(const float3& a, const float3& b) {
+    return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+static inline float dot(const float3& a, const float3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static inline float3 normalize(const float3& v) {
+    float invLen = 1.0f / sqrtf(dot(v, v));
+    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
+}
 
 #define OPTIX_CHECK(call)                                                      \
     do {                                                                       \
