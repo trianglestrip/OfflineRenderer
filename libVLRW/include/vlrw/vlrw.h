@@ -45,6 +45,16 @@ struct PointLightDesc {
     RGB intensity;
 };
 
+struct AreaLightDesc {
+    RGB position;   // center of the rectangle
+    RGB normal;     // surface normal (emission direction)
+    RGB tangent;   // tangent vector (defines width axis)
+    float width;   // size along tangent
+    float height;  // size along bitangent (cross(normal, tangent))
+    RGB emission;  // radiance (W/sr/m^2)
+    bool doubleSided = false;  // if true, emit from both sides
+};
+
 // ---- Scene ----
 class Scene {
 public:
@@ -64,6 +74,7 @@ public:
 
     void setMaterial(uint32_t id, const MaterialDesc& desc);
     void addPointLight(const PointLightDesc& light);
+    void addAreaLight(const AreaLightDesc& light);
 
     void finalize();
 
@@ -96,7 +107,9 @@ public:
         RGB* outputBuffer,
         uint32_t width,
         uint32_t height,
-        uint32_t spp = 1);
+        uint32_t spp = 1,
+        bool enableDenoiser = false,
+        int debugMode = 0);
 
 private:
     Renderer(RendererImpl* impl) : m_impl(impl) {}

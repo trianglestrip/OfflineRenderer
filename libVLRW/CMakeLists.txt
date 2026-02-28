@@ -79,6 +79,21 @@ nvcuda_compile_optix(
         "-I${CMAKE_CURRENT_SOURCE_DIR}/gpu"
 )
 
+# Trace and shadow kernels as PTX for runtime module loading (OptiX pipeline)
+nvcuda_compile_ptx(
+    SOURCES "gpu/trace_rays.cu" "gpu/shadow_trace.cu"
+    DEPENDENCIES ${VLRW_GPU_DEPS}
+    TARGET_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}/${TARGET_NAME}/ptxes"
+    GENERATED_FILES VLRW_TRACE_PTX
+    NVCC_OPTIONS
+        "-Xcompiler=/wd4819,/Zc:__cplusplus"
+        "--gpu-architecture=compute_75"
+        "-std=c++20"
+        "-I${OPTIX_INCLUDE_DIR}"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/gpu"
+)
+
 add_library(${TARGET_NAME} STATIC
     ${VLRW_SOURCES}
     ${VLRW_CUDA_KERNELS}
@@ -90,12 +105,14 @@ target_include_directories(${TARGET_NAME} PUBLIC
     "${OPTIX_INCLUDE_DIR}"
 )
 target_link_libraries(${TARGET_NAME} PUBLIC CUDA::cuda_driver)
+
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_20)
 
 if(MSVC)
     target_compile_options(${TARGET_NAME} PRIVATE
         "$<$<COMPILE_LANGUAGE:CXX>:/MP>"
         "$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>"
+        "$<$<COMPILE_LANGUAGE:CXX>:/wd4819>"  # 屏蔽 C4819 编码警告
     )
 endif()
 

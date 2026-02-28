@@ -63,13 +63,11 @@ endfunction()
 
 
 # Taskflow (header-only library for task-parallel programming)
-# TODO: Add Taskflow as git submodule
-# git submodule add https://github.com/taskflow/taskflow.git ext/taskflow
-# option(TF_BUILD_EXAMPLES "Build Taskflow examples" OFF)
-# option(TF_BUILD_TESTS "Build Taskflow tests" OFF)
-# option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
-# add_subdirectory(ext/taskflow)
-# set_project_group("External" "ext/taskflow")
+option(TF_BUILD_EXAMPLES "Build Taskflow examples" OFF)
+option(TF_BUILD_TESTS "Build Taskflow tests" OFF)
+option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
+add_subdirectory(ext/taskflow)
+set_project_group("External" "ext/taskflow")
 
 
 

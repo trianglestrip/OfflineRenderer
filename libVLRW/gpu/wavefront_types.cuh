@@ -36,10 +36,33 @@ struct RayState {
     float tmin, tmax;
 };
 
-struct HitInfo { float3 position, normal; uint32_t material_id; };
+struct HitInfo {
+    float3 position;
+    float3 normal;
+    uint32_t material_id;
+};
+struct MaterialData { float r, g, b; float er, eg, eb; };
+struct PointLight { float3 position; float3_rgb intensity; };
+
+struct AreaLight {
+    float3 position;
+    float3 normal;
+    float3 tangent;
+    float width;
+    float height;
+    float3_rgb emission;
+    uint32_t doubleSided;  // 1 = both sides, 0 = single sided
+};
 struct IndexQueue { uint32_t* indices; uint32_t capacity; };
 struct GlobalState {
     RayState* rayPool;
+    HitInfo* hitBuffer;
+    MaterialData* materials;
+    PointLight* lights;
+    uint32_t numLights;
+    uint32_t* visibilityBuffer;  // [rayIdx * numLights + lightIdx]: 1=visible, 0=occluded
+    AreaLight* areaLights;
+    uint32_t numAreaLights;
     IndexQueue activeQueue, nextQueue, shadowQueue;
     float3_rgb* accumBuffer;
     uint32_t* queueCounters;

@@ -92,6 +92,21 @@ graph LR
     style AB fill:#e1ffe1
 ```
 
+## 流程可优化点（对应上图）
+
+在保持当前阶段划分与数据流不变的前提下，可从调度与执行方式上做如下优化（对齐业界 Wavefront + Graph 做法）。
+
+| 优化项 | 当前状态 | 目标 |
+|--------|----------|------|
+| **阶段循环进图** | 阶段顺序写在 host、回调顺序执行 | 用 **Taskflow** 建单次 bounce 的 DAG（Intersect → Shade → Shadow → Compact），多 bounce 用 `run_n` 或链式节点；阶段依赖显式、便于 TFProf 与后续重叠 |
+| **CUDA Graph 录单 bounce** | 每个 kernel / OptiX launch 单独提交 | 把一次 bounce 的 OptiX trace + Shade + Shadow + Compact 录成 **CUDA Graph**，每 bounce 或每帧只提交一次图，减少 launch 与同步（参考 V-Ray GPU、RadeonRays） |
+| **Renderer 与 Scheduler 统一** | Renderer 自管 buffer、直接调 kernel；未用 WavefrontScheduler 迭代 | **render() 只驱动 WavefrontScheduler**：分配/释放在 Scheduler 或上层，每 bounce 调 `iterate()`；`iterate()` 内用 Taskflow 执行各 stage 或触发已录好的 CUDA Graph |
+| **MaterialEval 细分** | Shade 阶段已有，README 已列 Diffuse/GGX/Dielectric/Emissive | 在流程/文档中显式标出 **MaterialEval 内**：Diffuse / Specular / Shadow（NEE）分支，与「RayGen → Intersect → MaterialEval → Shadow」的业界表述一致；实现上可为同 kernel 内分支或按材质 sort 后分派 |
+| **CPU–GPU 重叠** | 多处 `cuCtxSynchronize()`，无重叠 | Taskflow 中「当前 bounce 的 GPU 任务」与「下一帧/下一批的 CPU 准备」并行，通过依赖边与多 stream 做重叠 |
+| **Render Graph 抽象（可选）** | 无 | 上层引入 **Pass + Resource** 声明（类似 Falcor）：每 stage 为一 pass，buffer 为边，由框架插 barrier、决定 overlap；利于多后端与多帧 |
+
+**优先级建议**：先做「Renderer 与 Scheduler 统一」+「阶段循环进图（Taskflow DAG）」；再做「CUDA Graph 录单 bounce」与 TFProf；最后视需求做 CPU–GPU 重叠与 Render Graph。
+
 ## 与 libVLR 的关系
 
 - **libVLR**：现有 Megakernel + 光谱 渲染库，保留。
@@ -130,6 +145,7 @@ graph LR
 
 ## 参考文档
 
+- 本节「流程可优化点」— 对应上文流程图，Taskflow / CUDA Graph / Renderer 统一等
 - [最优调度模型](../docs/wavefront_scheduler_optimal.md) — 理论与最终形态
 - [开发路线图](../docs/development_roadmap.md) — 4 个迭代（多 kernel → persistent）
 - [Pipeline 设计](../docs/wavefront_pipeline_design.md) — 队列与数据流

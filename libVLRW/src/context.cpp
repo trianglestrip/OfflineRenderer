@@ -52,6 +52,10 @@ void Scene::addPointLight(const PointLightDesc& light) {
     m_impl->addPointLight(light);
 }
 
+void Scene::addAreaLight(const AreaLightDesc& light) {
+    m_impl->addAreaLight(light);
+}
+
 void Scene::finalize() {
     m_impl->finalize();
 }
