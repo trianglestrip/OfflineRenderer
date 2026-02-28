@@ -10,6 +10,7 @@ struct LaunchParams {
     // Scene data
     OptixTraversableHandle traversable;
     const float* vertices;
+    const float* texcoords;
     const uint32_t* indices;
     const uint32_t* triangleMaterialIds;
 
@@ -27,6 +28,10 @@ struct LaunchParams {
     uint32_t sampleIndex;
     uint32_t numActive;
     float3 environmentRadiance;
+    const float4* environmentMap;
+    uint32_t environmentMapWidth;
+    uint32_t environmentMapHeight;
+    float environmentMapScale;
 };
 
 } // namespace optixw

@@ -114,6 +114,8 @@ public:
     CUdeviceptr d_hitBuffer = 0;
     CUdeviceptr d_compactCounter = 0;
     CUdeviceptr d_materials = 0;
+    CUdeviceptr d_texcoords = 0;
+    CUdeviceptr d_textures = 0;
     
     // Launch parameters
     CUdeviceptr d_launchParams = 0;
@@ -132,6 +134,7 @@ public:
     CUdeviceptr d_denoiserScratch = 0;
     CUdeviceptr d_denoiserInput = 0;
     CUdeviceptr d_denoiserOutput = 0;
+    CUdeviceptr d_denoiserIntensity = 0;
     size_t denoiserStateSize = 0;
     size_t denoiserScratchSize = 0;
     uint32_t denoiserWidth = 0;
@@ -140,8 +143,13 @@ public:
     uint32_t numPixels = 0;
     uint32_t maxRays = 0;
     uint32_t numMaterials = 0;
+    uint32_t numTextures = 0;
     uint32_t numTriangles = 0;
     float3 environmentRadiance = make_float3(0.0f, 0.0f, 0.0f);
+    CUdeviceptr d_environmentMap = 0;
+    uint32_t environmentMapWidth = 0;
+    uint32_t environmentMapHeight = 0;
+    float environmentMapScale = 1.0f;
     
     bool pipelineCreated = false;
     
@@ -176,6 +184,7 @@ public:
         if (d_denoiserScratch) cudaFree((void*)d_denoiserScratch);
         if (d_denoiserInput) cudaFree((void*)d_denoiserInput);
         if (d_denoiserOutput) cudaFree((void*)d_denoiserOutput);
+        if (d_denoiserIntensity) cudaFree((void*)d_denoiserIntensity);
     }
     
     void allocateBuffers(uint32_t width, uint32_t height) {
@@ -236,6 +245,7 @@ public:
         if (d_denoiserScratch) cudaFree((void*)d_denoiserScratch);
         if (d_denoiserInput) cudaFree((void*)d_denoiserInput);
         if (d_denoiserOutput) cudaFree((void*)d_denoiserOutput);
+        if (d_denoiserIntensity) cudaFree((void*)d_denoiserIntensity);
 
         OptixDenoiserSizes sizes = {};
         OPTIX_CHECK(optixDenoiserComputeMemoryResources(
@@ -254,6 +264,7 @@ public:
         size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserInput), imageSize));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserOutput), imageSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserIntensity), sizeof(float)));
 
         OPTIX_CHECK(optixDenoiserSetup(
             denoiser,
@@ -316,13 +327,21 @@ void Renderer::render(
     // Get scene data
     OptixTraversableHandle gasHandle = SceneAccessor::getGasHandle(scene);
     CUdeviceptr d_vertices = SceneAccessor::getVerticesPtr(scene);
+    CUdeviceptr d_texcoords = SceneAccessor::getTexcoordsPtr(scene);
     CUdeviceptr d_indices = SceneAccessor::getIndicesPtr(scene);
     CUdeviceptr d_triangleMaterialIds = SceneAccessor::getTriangleMaterialIdsPtr(scene);
     m_impl->d_materials = SceneAccessor::getMaterialsPtr(scene);
+    m_impl->d_texcoords = d_texcoords;
+    m_impl->d_textures = SceneAccessor::getTexturesPtr(scene);
     m_impl->numMaterials = SceneAccessor::getMaterialCount(scene);
+    m_impl->numTextures = SceneAccessor::getTextureCount(scene);
     m_impl->numTriangles = SceneAccessor::getTriangleCount(scene);
     const Vec3 env = SceneAccessor::getEnvironmentRadiance(scene);
     m_impl->environmentRadiance = toFloat3(env);
+    m_impl->d_environmentMap = SceneAccessor::getEnvironmentMapPtr(scene);
+    m_impl->environmentMapWidth = SceneAccessor::getEnvironmentMapWidth(scene);
+    m_impl->environmentMapHeight = SceneAccessor::getEnvironmentMapHeight(scene);
+    m_impl->environmentMapScale = SceneAccessor::getEnvironmentMapScale(scene);
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     
@@ -333,6 +352,7 @@ void Renderer::render(
         m_impl->renderSample(
             gasHandle,
             d_vertices,
+            d_texcoords,
             d_indices,
             d_triangleMaterialIds,
             camData,
@@ -383,19 +403,25 @@ void Renderer::render(
         output.pixelStrideInBytes = sizeof(float4);
         output.format = OPTIX_PIXEL_FORMAT_FLOAT4;
 
-        OptixDenoiserGuideLayer guide = {};
-        guide.albedo = input;
-        guide.normal = input;
         OptixDenoiserLayer layer = {};
         layer.input = input;
         layer.output = output;
         layer.previousOutput = {};
         layer.type = OPTIX_DENOISER_AOV_TYPE_BEAUTY;
+        OptixDenoiserGuideLayer guide = {};
 
         OptixDenoiserParams params = {};
         params.hdrAverageColor = 0;
         params.blendFactor = 0.0f;
-        params.hdrIntensity = 0;
+        OPTIX_CHECK(optixDenoiserComputeIntensity(
+            m_impl->denoiser,
+            0,
+            &input,
+            m_impl->d_denoiserIntensity,
+            m_impl->d_denoiserScratch,
+            m_impl->denoiserScratchSize
+        ));
+        params.hdrIntensity = m_impl->d_denoiserIntensity;
         params.temporalModeUsePreviousLayers = 0;
 
         OPTIX_CHECK(optixDenoiserInvoke(

@@ -8,11 +8,18 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 struct RenderConfig {
     uint32_t width = 512;
     uint32_t height = 512;
     uint32_t spp = 4;
+    bool denoiser = true;
 };
 
 namespace render_config {
@@ -32,12 +39,27 @@ inline std::string trim(const std::string& input) {
 }
 
 inline std::vector<std::filesystem::path> candidatePaths() {
-    return {
-        "render_config.ini",
-        "libOptixW/test/render_config.ini",
-        "../test/render_config.ini",
-        "../../../libOptixW/test/render_config.ini"
-    };
+    std::vector<std::filesystem::path> paths;
+
+#ifdef _WIN32
+    char exePath[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        paths.emplace_back(exeDir / "render_config.ini");
+    }
+#endif
+
+    paths.emplace_back("render_config.ini");
+    paths.emplace_back("test/render_config.ini");
+    paths.emplace_back("build/bin/Release/render_config.ini");
+    paths.emplace_back("build/bin/Debug/render_config.ini");
+    paths.emplace_back("../test/render_config.ini");
+    paths.emplace_back("../../test/render_config.ini");
+    paths.emplace_back("../../../test/render_config.ini");
+    paths.emplace_back("libOptixW/test/render_config.ini");
+    paths.emplace_back("../../../libOptixW/test/render_config.ini");
+    return paths;
 }
 
 inline std::filesystem::path resolveGalleryPath(const std::string& fileName) {
@@ -140,11 +162,14 @@ inline RenderConfig load(const std::string& sectionName, const RenderConfig& def
             config.height = parsed;
         } else if (key == "spp" && parsed > 0) {
             config.spp = parsed;
+        } else if (key == "denoiser") {
+            config.denoiser = (parsed != 0);
         }
     }
 
     std::cout << "[Config] Loaded " << foundPath.string() << " for [" << sectionName << "]: "
-              << config.width << "x" << config.height << " @ " << config.spp << " spp\n";
+              << config.width << "x" << config.height << " @ " << config.spp
+              << " spp, denoiser=" << (config.denoiser ? "on" : "off") << "\n";
     return config;
 }
 

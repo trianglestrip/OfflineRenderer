@@ -2,6 +2,10 @@
 # Manual copying executables and other files are required for other platforms.
 
 cmake_minimum_required(VERSION 3.26)
+
+# Silence vcpkg app-local deployment script warnings on systems without PowerShell Core (pwsh).
+set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Disable vcpkg app-local dependency deployment." FORCE)
+
 project(
     VLR_cmake
     VERSION 1.0
@@ -9,6 +13,11 @@ project(
     LANGUAGES C CXX CUDA)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# Keep runtime library consistent across all C++ targets to avoid LNK4098.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_RUNTIME_LIBRARY_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

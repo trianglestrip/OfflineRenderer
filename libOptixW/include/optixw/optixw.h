@@ -94,6 +94,12 @@ public:
         std::span<const uint32_t> indices,
         uint32_t materialId
     );
+    void addTriangleMeshWithTexcoords(
+        std::span<const float> vertices,
+        std::span<const float> texcoords,
+        std::span<const uint32_t> indices,
+        uint32_t materialId
+    );
     
     // Add materials
     uint32_t addMaterial(const MaterialData& material);
@@ -117,6 +123,9 @@ public:
     uint32_t addEmissiveMaterial(const Vec3& emission);
     uint32_t addMetalMaterial(const Vec3& albedo, float roughness);
     uint32_t addGlassMaterial(const Vec3& albedo, float ior);
+    uint32_t loadTexture2D(const char* filePath, bool sRGB = true);
+    void setMaterialBaseColorTexture(uint32_t materialId, uint32_t textureId);
+    void setEnvironmentMap(const char* filePath, float scale = 1.0f);
     
     // Add lights
     void addPointLight(const PointLight& light);

@@ -8,6 +8,11 @@
 #include <vector>
 #include <iostream>
 #include <cmath>
+#include <string>
+#include <filesystem>
+#include <stdexcept>
+#include <windows.h>
+#include <wincodec.h>
 
 namespace optixw {
 
@@ -36,6 +41,129 @@ inline float3 normalize3(const float3& v) {
     return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
 }
 
+inline std::wstring utf8ToWide(const char* text) {
+    if (text == nullptr || text[0] == '\0') {
+        return std::wstring();
+    }
+    const int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (len <= 0) {
+        throw std::runtime_error("Failed to convert UTF-8 path to wide string.");
+    }
+    std::wstring wide(static_cast<size_t>(len), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wide.data(), len);
+    wide.pop_back();
+    return wide;
+}
+
+inline float srgbToLinear(float x) {
+    x = fmaxf(0.0f, fminf(1.0f, x));
+    return (x <= 0.04045f) ? (x / 12.92f) : powf((x + 0.055f) / 1.055f, 2.4f);
+}
+
+inline bool loadImageRGBA32F(const char* filePath, bool decodeSRGB, std::vector<float4>* outPixels, uint32_t* outWidth, uint32_t* outHeight) {
+    if (!outPixels || !outWidth || !outHeight) {
+        return false;
+    }
+
+    std::wstring path = utf8ToWide(filePath);
+    if (path.empty()) {
+        return false;
+    }
+
+    HRESULT hrInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool didInit = SUCCEEDED(hrInit);
+
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    bool ok = false;
+    UINT w = 0;
+    UINT h = 0;
+    std::vector<uint8_t> rgba;
+
+    HRESULT hr = CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    hr = factory->CreateDecoderFromFilename(
+        path.c_str(),
+        nullptr,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,
+        &decoder);
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    hr = factory->CreateFormatConverter(&converter);
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    hr = converter->Initialize(
+        frame,
+        GUID_WICPixelFormat32bppRGBA,
+        WICBitmapDitherTypeNone,
+        nullptr,
+        0.0,
+        WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    hr = converter->GetSize(&w, &h);
+    if (FAILED(hr) || w == 0 || h == 0) {
+        goto Cleanup;
+    }
+
+    rgba.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 4u);
+    hr = converter->CopyPixels(
+        nullptr,
+        w * 4u,
+        static_cast<UINT>(rgba.size()),
+        rgba.data());
+    if (FAILED(hr)) {
+        goto Cleanup;
+    }
+
+    outPixels->resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (size_t i = 0; i < outPixels->size(); ++i) {
+        float r = rgba[i * 4 + 0] / 255.0f;
+        float g = rgba[i * 4 + 1] / 255.0f;
+        float b = rgba[i * 4 + 2] / 255.0f;
+        float a = rgba[i * 4 + 3] / 255.0f;
+        if (decodeSRGB) {
+            r = srgbToLinear(r);
+            g = srgbToLinear(g);
+            b = srgbToLinear(b);
+        }
+        (*outPixels)[i] = make_float4(r, g, b, a);
+    }
+
+    *outWidth = static_cast<uint32_t>(w);
+    *outHeight = static_cast<uint32_t>(h);
+    ok = true;
+
+Cleanup:
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (didInit) CoUninitialize();
+    return ok;
+}
+
 } // namespace
 
 // Scene implementation
@@ -43,11 +171,21 @@ class Scene::Impl {
 public:
     // Geometry data
     std::vector<float> vertices;
+    std::vector<float> texcoords;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> triangleMaterialIds;
     
     // Materials
     std::vector<MaterialData> materials;
+    std::vector<std::vector<float4>> texturePixelsHost;
+    std::vector<Texture2DData> textures;
+    std::vector<CUdeviceptr> d_textureImages;
+    CUdeviceptr d_textures = 0;
+    std::vector<float4> environmentPixelsHost;
+    CUdeviceptr d_environmentMap = 0;
+    uint32_t environmentMapWidth = 0;
+    uint32_t environmentMapHeight = 0;
+    float environmentMapScale = 1.0f;
     
     // Lights
     std::vector<PointLightData> pointLights;
@@ -59,6 +197,7 @@ public:
     
     // Device buffers
     CUdeviceptr d_vertices = 0;
+    CUdeviceptr d_texcoords = 0;
     CUdeviceptr d_indices = 0;
     CUdeviceptr d_materials = 0;
     CUdeviceptr d_triangleMaterialIds = 0;
@@ -67,15 +206,23 @@ public:
     
     OptixTraversableHandle getGasHandle() const { return gasHandle; }
     CUdeviceptr getVerticesPtr() const { return d_vertices; }
+    CUdeviceptr getTexcoordsPtr() const { return d_texcoords; }
     CUdeviceptr getIndicesPtr() const { return d_indices; }
     CUdeviceptr getMaterialsPtr() const { return d_materials; }
+    CUdeviceptr getTexturesPtr() const { return d_textures; }
     CUdeviceptr getTriangleMaterialIdsPtr() const { return d_triangleMaterialIds; }
     
     ~Impl() {
         if (d_gasOutputBuffer) cudaFree((void*)d_gasOutputBuffer);
         if (d_vertices) cudaFree((void*)d_vertices);
+        if (d_texcoords) cudaFree((void*)d_texcoords);
         if (d_indices) cudaFree((void*)d_indices);
         if (d_materials) cudaFree((void*)d_materials);
+        if (d_textures) cudaFree((void*)d_textures);
+        if (d_environmentMap) cudaFree((void*)d_environmentMap);
+        for (CUdeviceptr d_img : d_textureImages) {
+            if (d_img) cudaFree((void*)d_img);
+        }
         if (d_triangleMaterialIds) cudaFree((void*)d_triangleMaterialIds);
     }
 };
@@ -91,12 +238,46 @@ void Scene::addTriangleMesh(
     uint32_t baseVertex = m_impl->vertices.size() / 3;
     
     m_impl->vertices.insert(m_impl->vertices.end(), verts.begin(), verts.end());
+    const uint32_t addedVertices = static_cast<uint32_t>(verts.size() / 3);
+    m_impl->texcoords.insert(m_impl->texcoords.end(), addedVertices * 2, 0.0f);
     
     for (uint32_t idx : inds) {
         m_impl->indices.push_back(baseVertex + idx);
     }
     
     uint32_t numTriangles = inds.size() / 3;
+    for (uint32_t i = 0; i < numTriangles; ++i) {
+        m_impl->triangleMaterialIds.push_back(materialId);
+    }
+}
+
+void Scene::addTriangleMeshWithTexcoords(
+    std::span<const float> verts,
+    std::span<const float> texcoords,
+    std::span<const uint32_t> inds,
+    uint32_t materialId)
+{
+    if (verts.size() % 3 != 0) {
+        throw std::runtime_error("Vertices must be packed as float3.");
+    }
+    const uint32_t vertexCount = static_cast<uint32_t>(verts.size() / 3);
+    if (!texcoords.empty() && texcoords.size() != static_cast<size_t>(vertexCount) * 2u) {
+        throw std::runtime_error("Texcoords must be packed as float2 per vertex.");
+    }
+
+    uint32_t baseVertex = static_cast<uint32_t>(m_impl->vertices.size() / 3);
+    m_impl->vertices.insert(m_impl->vertices.end(), verts.begin(), verts.end());
+    if (texcoords.empty()) {
+        m_impl->texcoords.insert(m_impl->texcoords.end(), vertexCount * 2, 0.0f);
+    } else {
+        m_impl->texcoords.insert(m_impl->texcoords.end(), texcoords.begin(), texcoords.end());
+    }
+
+    for (uint32_t idx : inds) {
+        m_impl->indices.push_back(baseVertex + idx);
+    }
+
+    const uint32_t numTriangles = static_cast<uint32_t>(inds.size() / 3);
     for (uint32_t i = 0; i < numTriangles; ++i) {
         m_impl->triangleMaterialIds.push_back(materialId);
     }
@@ -131,6 +312,7 @@ static MaterialData createBaseMaterial() {
     mat.subMaterialIndices[2] = 0;
     mat.subMaterialIndices[3] = 0;
     mat.numSubMaterials = 0;
+    mat.baseColorTextureId = 0xFFFFFFFFu;
     return mat;
 }
 
@@ -286,6 +468,86 @@ uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
     return addSpecularScatteringMaterial(albedo, 1.0f, ior);
 }
 
+uint32_t Scene::loadTexture2D(const char* filePath, bool sRGB) {
+    if (!filePath || filePath[0] == '\0') {
+        throw std::runtime_error("Texture path is empty.");
+    }
+    if (m_impl->finalized) {
+        throw std::runtime_error("loadTexture2D must be called before finalize().");
+    }
+
+    std::vector<float4> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    if (!loadImageRGBA32F(filePath, sRGB, &pixels, &width, &height)) {
+        throw std::runtime_error(std::string("Failed to load texture: ") + filePath);
+    }
+
+    CUdeviceptr d_image = 0;
+    const size_t imageBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_image), imageBytes));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(d_image),
+        pixels.data(),
+        imageBytes,
+        cudaMemcpyHostToDevice));
+
+    Texture2DData td = {};
+    td.pixels = reinterpret_cast<const float4*>(d_image);
+    td.width = width;
+    td.height = height;
+    td.isSRGB = sRGB ? 1u : 0u;
+
+    m_impl->texturePixelsHost.emplace_back(std::move(pixels));
+    m_impl->d_textureImages.push_back(d_image);
+    m_impl->textures.push_back(td);
+    return static_cast<uint32_t>(m_impl->textures.size() - 1);
+}
+
+void Scene::setMaterialBaseColorTexture(uint32_t materialId, uint32_t textureId) {
+    if (materialId >= m_impl->materials.size()) {
+        throw std::runtime_error("Material id out of range.");
+    }
+    if (textureId >= m_impl->textures.size()) {
+        throw std::runtime_error("Texture id out of range.");
+    }
+    m_impl->materials[materialId].baseColorTextureId = textureId;
+}
+
+void Scene::setEnvironmentMap(const char* filePath, float scale) {
+    if (!filePath || filePath[0] == '\0') {
+        throw std::runtime_error("Environment map path is empty.");
+    }
+    if (m_impl->finalized) {
+        throw std::runtime_error("setEnvironmentMap must be called before finalize().");
+    }
+
+    std::vector<float4> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    if (!loadImageRGBA32F(filePath, true, &pixels, &width, &height)) {
+        throw std::runtime_error(std::string("Failed to load environment map: ") + filePath);
+    }
+
+    if (m_impl->d_environmentMap) {
+        cudaFree(reinterpret_cast<void*>(m_impl->d_environmentMap));
+        m_impl->d_environmentMap = 0;
+    }
+
+    const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_environmentMap), bytes));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void*>(m_impl->d_environmentMap),
+        pixels.data(),
+        bytes,
+        cudaMemcpyHostToDevice));
+
+    m_impl->environmentPixelsHost = std::move(pixels);
+    m_impl->environmentMapWidth = width;
+    m_impl->environmentMapHeight = height;
+    m_impl->environmentMapScale = fmaxf(scale, 0.0f);
+}
+
 void Scene::addPointLight(const PointLight& light) {
     PointLightData data;
     data.position = toFloat3(light.position);
@@ -320,23 +582,45 @@ void Scene::finalize() {
     
     // Upload geometry to GPU
     size_t verticesSize = m_impl->vertices.size() * sizeof(float);
+    size_t texcoordsSize = m_impl->texcoords.size() * sizeof(float);
     size_t indicesSize = m_impl->indices.size() * sizeof(uint32_t);
     size_t materialsSize = m_impl->materials.size() * sizeof(MaterialData);
+    size_t texturesSize = m_impl->textures.size() * sizeof(Texture2DData);
     size_t triangleMaterialIdsSize = m_impl->triangleMaterialIds.size() * sizeof(uint32_t);
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_vertices), verticesSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_indices), indicesSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_materials), materialsSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_triangleMaterialIds), triangleMaterialIdsSize));
+    if (verticesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_vertices), verticesSize));
+    if (texcoordsSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_texcoords), texcoordsSize));
+    if (indicesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_indices), indicesSize));
+    if (materialsSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_materials), materialsSize));
+    if (triangleMaterialIdsSize > 0) {
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_triangleMaterialIds), triangleMaterialIdsSize));
+    }
+    if (texturesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_textures), texturesSize));
     
-    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(), 
-                          verticesSize, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_indices, m_impl->indices.data(), 
-                          indicesSize, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_materials, m_impl->materials.data(), 
-                          materialsSize, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy((void*)m_impl->d_triangleMaterialIds, m_impl->triangleMaterialIds.data(), 
-                          triangleMaterialIdsSize, cudaMemcpyHostToDevice));
+    if (verticesSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(),
+                              verticesSize, cudaMemcpyHostToDevice));
+    }
+    if (texcoordsSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_texcoords, m_impl->texcoords.data(),
+                              texcoordsSize, cudaMemcpyHostToDevice));
+    }
+    if (indicesSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_indices, m_impl->indices.data(),
+                              indicesSize, cudaMemcpyHostToDevice));
+    }
+    if (materialsSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_materials, m_impl->materials.data(),
+                              materialsSize, cudaMemcpyHostToDevice));
+    }
+    if (triangleMaterialIdsSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_triangleMaterialIds, m_impl->triangleMaterialIds.data(),
+                              triangleMaterialIdsSize, cudaMemcpyHostToDevice));
+    }
+    if (texturesSize > 0) {
+        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_textures, m_impl->textures.data(),
+                              texturesSize, cudaMemcpyHostToDevice));
+    }
     
     // Build OptiX GAS (Geometry Acceleration Structure)
     std::cout << "[Scene] Building OptiX GAS..." << std::endl;
@@ -423,8 +707,16 @@ CUdeviceptr SceneAccessor::getIndicesPtr(Scene* scene) {
     return scene->m_impl->getIndicesPtr();
 }
 
+CUdeviceptr SceneAccessor::getTexcoordsPtr(Scene* scene) {
+    return scene->m_impl->getTexcoordsPtr();
+}
+
 CUdeviceptr SceneAccessor::getMaterialsPtr(Scene* scene) {
     return scene->m_impl->getMaterialsPtr();
+}
+
+CUdeviceptr SceneAccessor::getTexturesPtr(Scene* scene) {
+    return scene->m_impl->getTexturesPtr();
 }
 
 CUdeviceptr SceneAccessor::getTriangleMaterialIdsPtr(Scene* scene) {
@@ -439,6 +731,10 @@ uint32_t SceneAccessor::getTriangleCount(Scene* scene) {
     return static_cast<uint32_t>(scene->m_impl->indices.size() / 3);
 }
 
+uint32_t SceneAccessor::getTextureCount(Scene* scene) {
+    return static_cast<uint32_t>(scene->m_impl->textures.size());
+}
+
 Vec3 SceneAccessor::getEnvironmentRadiance(Scene* scene) {
     for (const MaterialData& mat : scene->m_impl->materials) {
         if (mat.type == static_cast<uint32_t>(MaterialType::EnvironmentEmitter)) {
@@ -447,6 +743,22 @@ Vec3 SceneAccessor::getEnvironmentRadiance(Scene* scene) {
         }
     }
     return Vec3(0.0f, 0.0f, 0.0f);
+}
+
+CUdeviceptr SceneAccessor::getEnvironmentMapPtr(Scene* scene) {
+    return scene->m_impl->d_environmentMap;
+}
+
+uint32_t SceneAccessor::getEnvironmentMapWidth(Scene* scene) {
+    return scene->m_impl->environmentMapWidth;
+}
+
+uint32_t SceneAccessor::getEnvironmentMapHeight(Scene* scene) {
+    return scene->m_impl->environmentMapHeight;
+}
+
+float SceneAccessor::getEnvironmentMapScale(Scene* scene) {
+    return scene->m_impl->environmentMapScale;
 }
 
 } // namespace optixw

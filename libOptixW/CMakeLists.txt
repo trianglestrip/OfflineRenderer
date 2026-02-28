@@ -69,6 +69,8 @@ target_link_libraries(${TARGET_NAME}
     PUBLIC
         CUDA::cudart
         CUDA::cuda_driver
+        windowscodecs
+        ole32
 )
 
 # C++20 standard

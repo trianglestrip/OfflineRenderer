@@ -1,6 +1,7 @@
     void renderSample(
         OptixTraversableHandle gasHandle,
         CUdeviceptr d_vertices,
+        CUdeviceptr d_texcoords,
         CUdeviceptr d_indices,
         CUdeviceptr d_triangleMaterialIds,
         const CameraData& camera,
@@ -42,6 +43,7 @@
             LaunchParams launchParams = {};
             launchParams.traversable = gasHandle;
             launchParams.vertices = reinterpret_cast<const float*>(d_vertices);
+            launchParams.texcoords = reinterpret_cast<const float*>(d_texcoords);
             launchParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
             launchParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
             launchParams.rayPool = reinterpret_cast<RayState*>(d_rayPool);
@@ -53,6 +55,10 @@
             launchParams.sampleIndex = sampleIndex;
             launchParams.numActive = numActive;
             launchParams.environmentRadiance = environmentRadiance;
+            launchParams.environmentMap = reinterpret_cast<const float4*>(d_environmentMap);
+            launchParams.environmentMapWidth = environmentMapWidth;
+            launchParams.environmentMapHeight = environmentMapHeight;
+            launchParams.environmentMapScale = environmentMapScale;
             
             CUDA_CHECK(cudaMemcpy(
                 (void*)d_launchParams,
@@ -80,13 +86,21 @@
             shadeParams.activeIndices = reinterpret_cast<const uint32_t*>(activeIn);
             shadeParams.hitBuffer = reinterpret_cast<const HitInfo*>(d_hitBuffer);
             shadeParams.vertices = reinterpret_cast<const float*>(d_vertices);
+            shadeParams.texcoords = reinterpret_cast<const float*>(d_texcoords);
             shadeParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
             shadeParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
             shadeParams.materials = reinterpret_cast<const MaterialData*>(d_materials);
+            shadeParams.textures = reinterpret_cast<const Texture2DData*>(d_textures);
             shadeParams.accumBuffer = reinterpret_cast<float3*>(d_accumBuffer);
             shadeParams.numTriangles = numTriangles;
             shadeParams.numMaterials = numMaterials;
+            shadeParams.numTextures = numTextures;
             shadeParams.numActive = numActive;
+            shadeParams.environmentRadiance = environmentRadiance;
+            shadeParams.environmentMap = reinterpret_cast<const float4*>(d_environmentMap);
+            shadeParams.environmentMapWidth = environmentMapWidth;
+            shadeParams.environmentMapHeight = environmentMapHeight;
+            shadeParams.environmentMapScale = environmentMapScale;
 
             void* shadeArgs[] = { &shadeParams };
             CU_CHECK(cuLaunchKernel(

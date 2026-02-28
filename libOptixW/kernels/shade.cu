@@ -7,6 +7,7 @@ using namespace optixw;
 
 static constexpr float kPi = 3.14159265f;
 static constexpr float kRayEps = 0.001f;
+static constexpr uint32_t kInvalidTextureId = 0xFFFFFFFFu;
 
 enum MaterialTag : uint32_t {
     kMatte = 0,
@@ -59,6 +60,87 @@ __device__ inline float3 cdiv3(const float3& a, const float3& b) {
         a.x / fmaxf(b.x, 1e-6f),
         a.y / fmaxf(b.y, 1e-6f),
         a.z / fmaxf(b.z, 1e-6f));
+}
+
+__device__ inline float2 make_float2_lerp(const float2& a, const float2& b, float t) {
+    return make_float2(a.x * (1.0f - t) + b.x * t, a.y * (1.0f - t) + b.y * t);
+}
+
+__device__ inline float wrap01(float x) {
+    return x - floorf(x);
+}
+
+__device__ inline float4 sampleTexture2DBilinear(const Texture2DData& tex, float2 uv) {
+    const uint32_t w = tex.width;
+    const uint32_t h = tex.height;
+    if (tex.pixels == nullptr || w == 0 || h == 0) {
+        return make_float4(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    float u = wrap01(uv.x);
+    float v = wrap01(uv.y);
+    float x = u * static_cast<float>(w - 1u);
+    float y = (1.0f - v) * static_cast<float>(h - 1u);
+
+    uint32_t x0 = static_cast<uint32_t>(floorf(x));
+    uint32_t y0 = static_cast<uint32_t>(floorf(y));
+    uint32_t x1 = min(x0 + 1u, w - 1u);
+    uint32_t y1 = min(y0 + 1u, h - 1u);
+
+    float tx = x - static_cast<float>(x0);
+    float ty = y - static_cast<float>(y0);
+
+    const float4 c00 = tex.pixels[y0 * w + x0];
+    const float4 c10 = tex.pixels[y0 * w + x1];
+    const float4 c01 = tex.pixels[y1 * w + x0];
+    const float4 c11 = tex.pixels[y1 * w + x1];
+
+    const float4 cx0 = make_float4(
+        c00.x * (1.0f - tx) + c10.x * tx,
+        c00.y * (1.0f - tx) + c10.y * tx,
+        c00.z * (1.0f - tx) + c10.z * tx,
+        c00.w * (1.0f - tx) + c10.w * tx);
+    const float4 cx1 = make_float4(
+        c01.x * (1.0f - tx) + c11.x * tx,
+        c01.y * (1.0f - tx) + c11.y * tx,
+        c01.z * (1.0f - tx) + c11.z * tx,
+        c01.w * (1.0f - tx) + c11.w * tx);
+
+    return make_float4(
+        cx0.x * (1.0f - ty) + cx1.x * ty,
+        cx0.y * (1.0f - ty) + cx1.y * ty,
+        cx0.z * (1.0f - ty) + cx1.z * ty,
+        cx0.w * (1.0f - ty) + cx1.w * ty);
+}
+
+__device__ inline float3 sampleEnvironment(const ShadeKernelParams& params, const float3& dir) {
+    if (params.environmentMap == nullptr || params.environmentMapWidth == 0 || params.environmentMapHeight == 0) {
+        return params.environmentRadiance;
+    }
+    float3 d = normalize(dir);
+    float u = wrap01(atan2f(d.z, d.x) * (0.5f / kPi) + 0.5f);
+    float v = acosf(fminf(1.0f, fmaxf(-1.0f, d.y))) / kPi;
+    const uint32_t x = min(static_cast<uint32_t>(u * params.environmentMapWidth), params.environmentMapWidth - 1u);
+    const uint32_t y = min(static_cast<uint32_t>(v * params.environmentMapHeight), params.environmentMapHeight - 1u);
+    const float4 c = params.environmentMap[y * params.environmentMapWidth + x];
+    return make_float3(c.x, c.y, c.z) * fmaxf(params.environmentMapScale, 0.0f);
+}
+
+__device__ inline MaterialData resolveMaterial(
+    const MaterialData& inMat,
+    const HitInfo& hit,
+    const Texture2DData* textures,
+    uint32_t numTextures)
+{
+    MaterialData out = inMat;
+    if (inMat.baseColorTextureId != kInvalidTextureId &&
+        inMat.baseColorTextureId < numTextures &&
+        textures != nullptr) {
+        const Texture2DData tex = textures[inMat.baseColorTextureId];
+        const float4 c = sampleTexture2DBilinear(tex, hit.texCoord);
+        out.baseColor = make_float3(c.x, c.y, c.z);
+    }
+    return out;
 }
 
 __device__ inline float3 sampleCosineHemisphere(float u1, float u2, float* pdf) {
@@ -408,9 +490,13 @@ __device__ inline bool isDeltaMaterial(
 }
 
 __device__ inline float3 evalMaterialBSDFSingle(
-    const MaterialData& mat,
+    const MaterialData& inMat,
+    const HitInfo& hit,
+    const Texture2DData* textures,
+    uint32_t numTextures,
     const float3& n, const float3& wo, const float3& wi)
 {
+    const MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
     float NoV = dot(n, wo);
     float NoL = dot(n, wi);
     float absNoV = fabsf(NoV);
@@ -480,10 +566,11 @@ __device__ inline float3 evalMaterialBSDFSingle(
 
 __device__ inline float3 evalMaterialBSDF(
     const MaterialData& mat, const MaterialData* materials, uint32_t numMaterials,
+    const HitInfo& hit, const Texture2DData* textures, uint32_t numTextures,
     const float3& n, const float3& wo, const float3& wi)
 {
     if (mat.type != kMulti) {
-        return evalMaterialBSDFSingle(mat, n, wo, wi);
+        return evalMaterialBSDFSingle(mat, hit, textures, numTextures, n, wo, wi);
     }
 
     uint32_t ids[4] = {};
@@ -499,7 +586,7 @@ __device__ inline float3 evalMaterialBSDF(
         if (child.type == kMulti || child.type == kEnvironmentEmitter) {
             continue;
         }
-        sum = sum + evalMaterialBSDFSingle(child, n, wo, wi);
+        sum = sum + evalMaterialBSDFSingle(child, hit, textures, numTextures, n, wo, wi);
         ++used;
     }
 
@@ -551,13 +638,16 @@ __device__ inline BSDFSample sampleGGXSpecular(
 }
 
 __device__ inline BSDFSample sampleMaterialSingle(
-    const MaterialData& mat,
+    const MaterialData& inMat,
+    const Texture2DData* textures,
+    uint32_t numTextures,
     const HitInfo& hit,
     RayState& ray,
     const float3& wo,
     uint32_t& seed)
 {
     BSDFSample s = {};
+    const MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
     const float3 n = hit.normal;
 
     if (mat.type == kMatte) {
@@ -723,19 +813,22 @@ __device__ inline BSDFSample sampleMaterial(
     const MaterialData& mat,
     const MaterialData* materials,
     uint32_t numMaterials,
+    const Texture2DData* textures,
+    uint32_t numTextures,
     const HitInfo& hit,
     RayState& ray,
     const float3& wo,
     uint32_t& seed)
 {
     if (mat.type != kMulti) {
-        return sampleMaterialSingle(mat, hit, ray, wo, seed);
+        return sampleMaterialSingle(mat, textures, numTextures, hit, ray, wo, seed);
     }
 
     uint32_t ids[4] = {};
     uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
     if (count == 0) {
-        return sampleDiffuse(mat.baseColor, hit.normal, seed);
+        const MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
+        return sampleDiffuse(resolved.baseColor, hit.normal, seed);
     }
 
     uint32_t validIds[4] = {};
@@ -748,11 +841,12 @@ __device__ inline BSDFSample sampleMaterial(
         validIds[validCount++] = ids[i];
     }
     if (validCount == 0) {
-        return sampleDiffuse(mat.baseColor, hit.normal, seed);
+        const MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
+        return sampleDiffuse(resolved.baseColor, hit.normal, seed);
     }
 
     uint32_t sel = min(static_cast<uint32_t>(randf(seed) * validCount), validCount - 1);
-    BSDFSample inner = sampleMaterialSingle(materials[validIds[sel]], hit, ray, wo, seed);
+    BSDFSample inner = sampleMaterialSingle(materials[validIds[sel]], textures, numTextures, hit, ray, wo, seed);
     if (inner.valid) {
         inner.weight = inner.weight * static_cast<float>(validCount);
     }
@@ -790,8 +884,9 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
     }
 
     const MaterialData& mat = params.materials[hit.materialId];
-    if (isEmitterMaterial(mat, params.materials, params.numMaterials)) {
-        float3 Le = emitterRadianceResolved(mat, params.materials, params.numMaterials, -ray.direction);
+    const MaterialData resolvedMat = resolveMaterial(mat, hit, params.textures, params.numTextures);
+    if (isEmitterMaterial(resolvedMat, params.materials, params.numMaterials)) {
+        float3 Le = emitterRadianceResolved(resolvedMat, params.materials, params.numMaterials, -ray.direction);
         ray.radiance = ray.radiance + ray.throughput * Le;
         ray.stage = RayState::Terminated;
         params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
@@ -804,7 +899,16 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
     float3 shadowWi = black3();
     float shadowDist = 0.0f;
 
-    BSDFSample bs = sampleMaterial(mat, params.materials, params.numMaterials, hit, ray, wo, ray.seed);
+    BSDFSample bs = sampleMaterial(
+        resolvedMat,
+        params.materials,
+        params.numMaterials,
+        params.textures,
+        params.numTextures,
+        hit,
+        ray,
+        wo,
+        ray.seed);
     if (!bs.valid) {
         ray.stage = RayState::Terminated;
         params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
@@ -812,7 +916,7 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
     }
 
     // NEE with true visibility for non-delta material families.
-    if (!bs.isDelta && !isDeltaMaterial(mat, params.materials, params.numMaterials)) {
+    if (!bs.isDelta && !isDeltaMaterial(resolvedMat, params.materials, params.numMaterials)) {
         float3 lightPos, lightNormal;
         uint32_t lightMatId = 0;
         float lightPdfArea = 0.0f;
@@ -829,13 +933,54 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
                         lightMat, params.materials, params.numMaterials, -shadowWi);
                     if (hasValue(Le)) {
                         float3 f = evalMaterialBSDF(
-                            mat, params.materials, params.numMaterials, hit.normal, wo, shadowWi);
+                            resolvedMat,
+                            params.materials,
+                            params.numMaterials,
+                            hit,
+                            params.textures,
+                            params.numTextures,
+                            hit.normal,
+                            wo,
+                            shadowWi);
                         if (hasValue(f)) {
                             float geom = (cosSurfaceAbs * cosLight) / dist2;
                             directContribution = ray.throughput * f * Le * (geom / lightPdfArea);
                             hasDirectSample = hasValue(directContribution);
                             shadowDist = sqrtf(dist2);
                         }
+                    }
+                }
+            }
+        }
+
+        if (!hasDirectSample &&
+            (hasValue(params.environmentRadiance) ||
+             (params.environmentMap != nullptr && params.environmentMapWidth > 0 && params.environmentMapHeight > 0))) {
+            const float u1 = randf(ray.seed);
+            const float u2 = randf(ray.seed);
+            const float z = 1.0f - 2.0f * u1;
+            const float r = sqrtf(fmaxf(0.0f, 1.0f - z * z));
+            const float phi = 2.0f * kPi * u2;
+            shadowWi = make_float3(r * cosf(phi), z, r * sinf(phi));
+            const float cosSurface = fmaxf(0.0f, dot(hit.normal, shadowWi));
+            if (cosSurface > 0.0f) {
+                const float3 Le = sampleEnvironment(params, shadowWi);
+                if (hasValue(Le)) {
+                    const float3 f = evalMaterialBSDF(
+                        resolvedMat,
+                        params.materials,
+                        params.numMaterials,
+                        hit,
+                        params.textures,
+                        params.numTextures,
+                        hit.normal,
+                        wo,
+                        shadowWi);
+                    if (hasValue(f)) {
+                        const float pdf = 1.0f / (4.0f * kPi);
+                        directContribution = ray.throughput * f * Le * (cosSurface / fmaxf(pdf, 1e-6f));
+                        hasDirectSample = hasValue(directContribution);
+                        shadowDist = 1.0e20f;
                     }
                 }
             }

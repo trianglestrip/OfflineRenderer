@@ -178,7 +178,7 @@ int main() {
         std::cout << "[Test] Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
         
         std::vector<Vec3> outputBuffer(width * height);
-        renderer->render(scene, camera, outputBuffer.data(), width, height, spp, true);
+        renderer->render(scene, camera, outputBuffer.data(), width, height, spp, cfg.denoiser);
         
         const std::filesystem::path outputPath = render_config::resolveGalleryPath("cornell_box_var.png");
         savePNG(outputPath.string().c_str(), outputBuffer.data(), width, height);

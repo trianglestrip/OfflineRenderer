@@ -6,14 +6,17 @@ if(DEFINED ENV{OptiX_INSTALL_DIR} AND NOT OptiX_INSTALL_DIR)
     set(OptiX_INSTALL_DIR "$ENV{OptiX_INSTALL_DIR}" CACHE PATH "Path to OptiX SDK (from env)" FORCE)
 endif()
 
-find_path(OPTIX80_INCLUDE_DIR
-    NAMES optix.h
-    PATHS "${OptiX_INSTALL_DIR}/include"
-    NO_DEFAULT_PATH
-)
-find_path(OPTIX80_INCLUDE_DIR
-    NAMES optix.h
-)
+if(OptiX_INSTALL_DIR)
+    find_path(OPTIX80_INCLUDE_DIR
+        NAMES optix.h
+        PATHS "${OptiX_INSTALL_DIR}/include"
+        NO_DEFAULT_PATH
+    )
+else()
+    find_path(OPTIX80_INCLUDE_DIR
+        NAMES optix.h
+    )
+endif()
 
 if(OPTIX80_INCLUDE_DIR)
     set(OptiX80_FOUND TRUE)

@@ -69,6 +69,14 @@ struct MaterialData {
     uint32_t type;  // MaterialType
     uint32_t subMaterialIndices[4];
     uint32_t numSubMaterials;
+    uint32_t baseColorTextureId;
+};
+
+struct Texture2DData {
+    const float4* pixels;
+    uint32_t width;
+    uint32_t height;
+    uint32_t isSRGB;
 };
 
 // Light data
