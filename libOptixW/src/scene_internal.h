@@ -14,6 +14,7 @@ public:
     static CUdeviceptr getIndicesPtr(Scene* scene);
     static CUdeviceptr getMaterialsPtr(Scene* scene);
     static CUdeviceptr getTriangleMaterialIdsPtr(Scene* scene);
+    static uint32_t getMaterialCount(Scene* scene);
 };
 
 } // namespace optixw

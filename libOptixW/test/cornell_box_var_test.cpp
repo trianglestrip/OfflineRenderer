@@ -169,9 +169,9 @@ int main() {
         camera.aspect = 1.0f;
         
         // Render
-        const uint32_t width = 1024;
-        const uint32_t height = 1024;
-        const uint32_t spp = 16;  // More samples for better quality
+        const uint32_t width = 512;
+        const uint32_t height = 512;
+        const uint32_t spp = 4;  // Reduced for testing
         
         std::cout << "[Test] Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
         

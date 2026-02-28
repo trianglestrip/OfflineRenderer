@@ -304,4 +304,8 @@ CUdeviceptr SceneAccessor::getTriangleMaterialIdsPtr(Scene* scene) {
     return scene->m_impl->getTriangleMaterialIdsPtr();
 }
 
+uint32_t SceneAccessor::getMaterialCount(Scene* scene) {
+    return static_cast<uint32_t>(scene->m_impl->materials.size());
+}
+
 } // namespace optixw

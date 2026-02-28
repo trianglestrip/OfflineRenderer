@@ -14,6 +14,13 @@ using namespace optixw;
 void savePNG(const char* filename, const RGB* image, uint32_t width, uint32_t height) {
     std::vector<uint8_t> pixels(width * height * 3);
     
+    // Debug: check first few pixels
+    float maxVal = 0.0f;
+    for (uint32_t i = 0; i < std::min(10u, width * height); ++i) {
+        maxVal = std::max(maxVal, std::max(image[i].r, std::max(image[i].g, image[i].b)));
+    }
+    std::cout << "[Debug] First 10 pixels max value: " << maxVal << std::endl;
+    
     for (uint32_t i = 0; i < width * height; ++i) {
         float gamma = 1.0f / 2.2f;
         pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].r, 0.0f, 1.0f), gamma) * 255);

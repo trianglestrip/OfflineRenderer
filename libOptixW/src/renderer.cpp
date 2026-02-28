@@ -31,6 +31,17 @@
         }                                                                      \
     } while (0)
 
+#define CU_CHECK(call)                                                         \
+    do {                                                                       \
+        CUresult error = call;                                                 \
+        if (error != CUDA_SUCCESS) {                                           \
+            const char* errStr;                                                \
+            cuGetErrorString(error, &errStr);                                  \
+            throw std::runtime_error(                                          \
+                std::string("CUDA Driver API call failed: ") + errStr);        \
+        }                                                                      \
+    } while (0)
+
 namespace optixw {
 
 // Forward declarations
@@ -69,12 +80,17 @@ public:
     CUdeviceptr d_activeIndices = 0;
     CUdeviceptr d_accumBuffer = 0;
     CUdeviceptr d_hitBuffer = 0;
+    CUdeviceptr d_materials = 0;
     
     // Launch parameters
     CUdeviceptr d_launchParams = 0;
     
+    // CUDA kernels
+    CUfunction shadeKernel = nullptr;
+    
     uint32_t numPixels = 0;
     uint32_t maxRays = 0;
+    uint32_t numMaterials = 0;
     
     bool pipelineCreated = false;
     
@@ -98,6 +114,7 @@ public:
         if (d_activeIndices) cudaFree((void*)d_activeIndices);
         if (d_accumBuffer) cudaFree((void*)d_accumBuffer);
         if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
+        if (d_materials) cudaFree((void*)d_materials);
         if (d_launchParams) cudaFree((void*)d_launchParams);
     }
     
@@ -178,6 +195,8 @@ void Renderer::render(
     CUdeviceptr d_vertices = SceneAccessor::getVerticesPtr(scene);
     CUdeviceptr d_indices = SceneAccessor::getIndicesPtr(scene);
     CUdeviceptr d_triangleMaterialIds = SceneAccessor::getTriangleMaterialIdsPtr(scene);
+    m_impl->d_materials = SceneAccessor::getMaterialsPtr(scene);
+    m_impl->numMaterials = SceneAccessor::getMaterialCount(scene);
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     
@@ -208,6 +227,16 @@ void Renderer::render(
         cudaMemcpyDeviceToHost
     ));
     
+    // Debug: check accumulation buffer
+    float maxAccum = 0.0f;
+    uint32_t checkCount = (100u < m_impl->numPixels) ? 100u : m_impl->numPixels;
+    for (uint32_t i = 0; i < checkCount; ++i) {
+        float val = (accumBuffer[i].x > accumBuffer[i].y) ? accumBuffer[i].x : accumBuffer[i].y;
+        val = (val > accumBuffer[i].z) ? val : accumBuffer[i].z;
+        maxAccum = (maxAccum > val) ? maxAccum : val;
+    }
+    std::cout << "[Debug] Accum buffer max (first 100 pixels): " << maxAccum << std::endl;
+    
     // Average and copy to output
     float invSpp = 1.0f / spp;
     for (uint32_t i = 0; i < m_impl->numPixels; ++i) {
@@ -215,6 +244,15 @@ void Renderer::render(
         outputBuffer[i].g = accumBuffer[i].y * invSpp;
         outputBuffer[i].b = accumBuffer[i].z * invSpp;
     }
+    
+    // Debug: check output buffer
+    float maxOutput = 0.0f;
+    for (uint32_t i = 0; i < checkCount; ++i) {
+        float val = (outputBuffer[i].r > outputBuffer[i].g) ? outputBuffer[i].r : outputBuffer[i].g;
+        val = (val > outputBuffer[i].b) ? val : outputBuffer[i].b;
+        maxOutput = (maxOutput > val) ? maxOutput : val;
+    }
+    std::cout << "[Debug] Output buffer max (first 100 pixels): " << maxOutput << std::endl;
     
     std::cout << "[Renderer] Render complete" << std::endl;
 }

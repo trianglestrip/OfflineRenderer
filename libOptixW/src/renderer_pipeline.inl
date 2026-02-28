@@ -112,7 +112,7 @@
         
         // Build SBT
         buildSBT();
-        
+
         pipelineCreated = true;
         std::cout << "[Renderer] Pipeline created successfully" << std::endl;
     }
