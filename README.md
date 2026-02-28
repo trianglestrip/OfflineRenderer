@@ -41,8 +41,9 @@ VLR 是一个基于 NVIDIA OptiX 7 的 GPU 蒙特卡洛光线追踪渲染器。
 * **vlrcpp.h** - C++ 单文件封装\
   通过 std::shared_ptr 自动管理对象生命周期。
 * **HostProgram** - 演示 VLR 使用方法的示例程序
-* **libVLRW** - 与 libVLR 并列的 Wavefront 渲染核（RGB、OptiX），面向建筑表现离线渲染的演进路线。  
-  📖 [总览](docs/OVERVIEW.md) | [架构分工](docs/architecture_separation.md) | [18 个月蓝图](docs/architecture_blueprint_18m.md) | [最优调度模型](docs/wavefront_scheduler_optimal.md)
+* **libOptixW** - 新的 Wavefront 架构渲染器（基于 OptiX 8.0+，CUDA 13.1+）✅  
+  **状态**: 基础实现完成，成功渲染 Cornell Box  
+  **特性**: Wavefront 渲染循环、Lambertian/Emissive 材质、OptiX Pipeline、GAS 构建
 
 ## API
 使用 VLRCpp（C++ 封装）的代码示例
