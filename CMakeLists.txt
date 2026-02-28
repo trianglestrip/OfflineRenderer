@@ -71,5 +71,6 @@ set_project_group("External" "ext/taskflow")
 
 
 
-add_subdirectory(libVLRW)
-set_project_group("libVLRW" "libVLRW")
+# libOptixW: Wavefront Path Tracer wrapper for libVLR
+add_subdirectory(libOptixW)
+set_project_group("libOptixW" "libOptixW")

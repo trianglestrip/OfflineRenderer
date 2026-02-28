@@ -1,5 +1,7 @@
 #include <optix.h>
+#include <cuda_runtime.h>
 #include <optixw/types.h>
+#include "vector_math.cuh"
 
 using namespace optixw;
 

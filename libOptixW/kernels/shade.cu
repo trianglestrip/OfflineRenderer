@@ -1,5 +1,7 @@
 #include <optix.h>
+#include <cuda_runtime.h>
 #include <optixw/types.h>
+#include "vector_math.cuh"
 
 using namespace optixw;
 
@@ -55,8 +57,9 @@ extern "C" __global__ void shade(ShadeParams params) {
     const HitInfo& hit = params.hitBuffer[rayIndex];
     const MaterialData& mat = params.materials[hit.materialId];
     
-    // Handle emissive materials
-    if (mat.type == static_cast<uint32_t>(MaterialType::Emissive)) {
+    // Handle emissive materials (check emission values)
+    bool isEmissive = (mat.emission.x > 0.0f || mat.emission.y > 0.0f || mat.emission.z > 0.0f);
+    if (isEmissive) {
         ray.radiance = ray.radiance + ray.throughput * mat.emission;
         ray.stage = RayState::Terminated;
         params.accumBuffer[ray.pixelIndex] = ray.radiance;
@@ -67,24 +70,22 @@ extern "C" __global__ void shade(ShadeParams params) {
     float3 albedo = mat.albedo;
     float3 brdf = albedo * (1.0f / 3.14159265f);
     
-    // Sample new direction
+    // Sample new direction (cosine hemisphere)
     float u1 = randf(ray.seed);
     float u2 = randf(ray.seed);
+    
     float pdf;
     float3 localDir = sampleCosineHemisphere(u1, u2, &pdf);
     float3 newDir = toWorld(localDir, hit.normal);
     
-    float cosTheta = localDir.y;  // local.y is the cosine
-    
     // Update throughput
-    ray.throughput = ray.throughput * brdf * (cosTheta / fmaxf(pdf, 1e-7f));
+    float cosTheta = localDir.y;  // local y = normal direction
+    ray.throughput = ray.throughput * brdf * cosTheta / pdf;
     
-    // Russian roulette
+    // Russian Roulette
     if (ray.depth >= 3) {
-        float survivalProb = fminf(0.95f, fmaxf(
-            ray.throughput.x,
-            fmaxf(ray.throughput.y, ray.throughput.z)
-        ));
+        float3 tp = ray.throughput;
+        float survivalProb = fminf(0.95f, fmaxf(0.2f, fmaxf(tp.x, fmaxf(tp.y, tp.z))));
         
         if (randf(ray.seed) > survivalProb) {
             ray.stage = RayState::Terminated;
@@ -95,16 +96,11 @@ extern "C" __global__ void shade(ShadeParams params) {
         ray.throughput = ray.throughput / survivalProb;
     }
     
-    // Continue path
-    ray.origin = hit.position + hit.normal * 1e-4f;
+    // Update ray
+    ray.origin = hit.position + hit.normal * 0.001f;
     ray.direction = newDir;
+    ray.tMin = 0.001f;
+    ray.tMax = 1e20f;
     ray.depth++;
-    
-    // Terminate if max depth reached
-    if (ray.depth >= 8) {
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = ray.radiance;
-    } else {
-        ray.stage = RayState::Trace;
-    }
+    ray.stage = RayState::Trace;
 }

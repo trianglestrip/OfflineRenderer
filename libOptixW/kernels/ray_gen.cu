@@ -1,5 +1,7 @@
 #include <optix.h>
+#include <cuda_runtime.h>
 #include <optixw/types.h>
+#include "vector_math.cuh"
 
 using namespace optixw;
 
@@ -17,10 +19,10 @@ extern "C" {
     __constant__ RayGenParams params;
 }
 
-// Simple random number generator
-__device__ inline float randf(uint32_t& seed) {
+// Simple random number generator (LCG)
+__device__ __forceinline__ float randf(uint32_t& seed) {
     seed = seed * 1664525u + 1013904223u;
-    return (float)(seed >> 16) / 65536.0f;
+    return (seed & 0x00FFFFFF) / 16777216.0f;
 }
 
 // Generate primary rays
@@ -60,5 +62,5 @@ extern "C" __global__ void __raygen__generate_primary() {
     ray.stage = RayState::Trace;
     ray.seed = seed;
     ray.tMin = 0.001f;
-    ray.tMax = 1e16f;
+    ray.tMax = 1e20f;
 }

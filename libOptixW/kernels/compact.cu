@@ -1,4 +1,5 @@
 #include <optix.h>
+#include <cuda_runtime.h>
 #include <optixw/types.h>
 
 using namespace optixw;
