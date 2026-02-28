@@ -133,6 +133,32 @@ uint32_t Scene::addEmissiveMaterial(const RGB& emission) {
     return m_impl->materials.size() - 1;
 }
 
+uint32_t Scene::addMetalMaterial(const RGB& albedo, float roughness) {
+    MaterialData mat;
+    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
+    mat.emission = cpu_math::make_float3(0, 0, 0);
+    mat.roughness = roughness;
+    mat.metallic = 1.0f;
+    mat.ior = 1.0f;
+    mat.type = static_cast<uint32_t>(MaterialType::Metal);
+    
+    m_impl->materials.push_back(mat);
+    return m_impl->materials.size() - 1;
+}
+
+uint32_t Scene::addGlassMaterial(const RGB& albedo, float ior) {
+    MaterialData mat;
+    mat.albedo = cpu_math::make_float3(albedo.r, albedo.g, albedo.b);
+    mat.emission = cpu_math::make_float3(0, 0, 0);
+    mat.roughness = 0.0f;
+    mat.metallic = 0.0f;
+    mat.ior = ior;
+    mat.type = static_cast<uint32_t>(MaterialType::Glass);
+    
+    m_impl->materials.push_back(mat);
+    return m_impl->materials.size() - 1;
+}
+
 void Scene::addPointLight(const PointLight& light) {
     PointLightData data;
     data.position = cpu_math::make_float3(light.position.r, light.position.g, light.position.b);

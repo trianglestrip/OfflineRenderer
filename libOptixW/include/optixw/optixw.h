@@ -48,7 +48,8 @@ struct AreaLight {
 enum class MaterialType : uint32_t {
     Lambertian = 0,
     Emissive = 1,
-    Specular = 2
+    Metal = 2,
+    Glass = 3
 };
 
 // Context: CUDA and OptiX device initialization
@@ -83,6 +84,8 @@ public:
     uint32_t addMaterial(const MaterialData& material);
     uint32_t addLambertianMaterial(const RGB& albedo);
     uint32_t addEmissiveMaterial(const RGB& emission);
+    uint32_t addMetalMaterial(const RGB& albedo, float roughness);
+    uint32_t addGlassMaterial(const RGB& albedo, float ior);
     
     // Add lights
     void addPointLight(const PointLight& light);

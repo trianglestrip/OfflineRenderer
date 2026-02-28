@@ -1,146 +1,223 @@
-# VLR: 
+# OfflineRenderer
 
-![VLR](README_TOP.jpg)\
-IBL 图像: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
+本项目包含多个基于 NVIDIA OptiX 的 GPU 光线追踪渲染器实现。
 
-VLR 是一个基于 NVIDIA OptiX 7 的 GPU 蒙特卡洛光线追踪渲染器。
+## 技术架构对比
 
-## 特性
-* 基于 NVIDIA OptiX 7 的 GPU 渲染器
-* 全光谱渲染（蒙特卡洛光谱采样）\
-  （对于 RGB 资源，使用 Meng-Simon 方法进行 RGB->光谱转换 \[Meng2015\]）
-* RGB 渲染（默认构建模式）
-* BSDFs
-    * 理想漫反射 (Lambert) BRDF
-    * 理想镜面反射 BRDF/BSDF
-    * 微表面 (GGX) BRDF/BSDF
-    * 菲涅尔混合朗伯 BSDF
-    * 类 UE4 或 Frostbite 风格的 BRDF \[Karis2013, Lagarde2014\]\
-      参数可以使用 UE4 风格（基础颜色、粗糙度/金属度）或传统风格（漫反射、高光、光泽度）来指定。
-    * 混合 BSDF
+| 特性 | libOptixW (Wavefront) | libVLR (Megakernel) |
+|---|---|---|
+| **架构** | Wavefront Path Tracing | Megakernel |
+| **OptiX 版本** | 8.0+ | 7.x |
+| **CUDA 版本** | 13.1+ | 11.8 |
+| **GPU 要求** | compute_75+ (Turing+) | compute_52+ (Maxwell+) |
+| **渲染模式** | RGB | 全光谱 / RGB |
+| **API 风格** | 现代 C++20 | C API + C++ 封装 |
+| **状态** | ✅ 核心功能完成 | ✅ 完整实现 |
+| **性能** | 高（Wavefront 优化） | 中（Megakernel 发散） |
+
+## libOptixW 特性
+
+### 已实现 ✅
+* **渲染架构**:
+  - Wavefront Path Tracing（光线排序，减少发散）
+  - Next Event Estimation (NEE) 直接光照
+  - 多重采样抗锯齿 (SPP)
+* **材质系统**:
+  - Lambertian BRDF（理想漫反射）
+  - Emissive 材质（自发光）
+* **光源**:
+  - 点光源
+  - 面光源（矩形）
+* **加速结构**:
+  - OptiX GAS（几何加速结构）
+  - 单层场景（无实例化）
+* **输出**:
+  - PNG 图像（通过 stb_image_write）
+  - Gamma 校正（2.2）
+
+### 计划中 🔲
+* **材质**: Specular BRDF、GGX 微表面、混合材质
+* **光源**: 环境光照（IBL）、方向光
+* **纹理**: 2D 纹理映射、法线贴图
+* **优化**: 队列压缩、流式多重采样、多 GPU
+* **后处理**: OptiX Denoiser 降噪
+
+## libVLR 特性（参考）
+
+* 全光谱渲染（蒙特卡洛光谱采样）
+* RGB->光谱转换（Meng-Simon 方法）
+* 完整的 BSDF 系统（Lambert、Specular、GGX、UE4 风格等）
 * 着色器节点系统
-* 凹凸贴图（法线贴图 / 高度贴图）
-* Alpha 纹理
-* 光源类型
-    * 面积（多边形）光源
-    * 点光源
-    * 基于图像的环境光
-* 相机类型
-    * 具有景深效果的透视相机（薄透镜模型）
-    * 环境（等距柱状投影）相机
-* 几何体实例化
-* 光线传输算法
-    * 路径追踪 \[Kajiya1986\] 结合 MIS
-    * 光线追踪
-    * 光顶点缓存双向路径追踪 (LVC-BPT) \[Davidovi&#269;2014\]
-* 正确处理由着色法线引起的非对称散射 \[Veach1997\]
+* 法线贴图 / 高度贴图 / Alpha 纹理
+* 多种光线传输算法（Path Tracing、LVC-BPT）
+* 几何体实例化和场景图
+* 透视相机（景深）、环境相机
 
-## 组件
-* **libVLR** - 基于 OptiX 的渲染器库（Megakernel + 光谱）\
-  提供 C 语言 API。
-* **vlrcpp.h** - C++ 单文件封装\
-  通过 std::shared_ptr 自动管理对象生命周期。
-* **HostProgram** - 演示 VLR 使用方法的示例程序
-* **libOptixW** - 新的 Wavefront 架构渲染器（基于 OptiX 8.0+，CUDA 13.1+）✅  
-  **状态**: 基础实现完成，成功渲染 Cornell Box  
-  **特性**: Wavefront 渲染循环、Lambertian/Emissive 材质、OptiX Pipeline、GAS 构建
+## 快速开始
 
-## API
-使用 VLRCpp（C++ 封装）的代码示例
+### 1. 环境要求
 
-```cpp
-using namespace vlr;
+| 工具 | 版本要求 |
+|---|---|
+| Visual Studio | 2022 (17.14+) |
+| CMake | 3.26+ |
+| CUDA Toolkit | 13.1+ |
+| OptiX SDK | 8.0+ |
+| GPU | compute_75+ (Turing/Ampere/Ada) |
 
-ContextRef context = Context::create(cuContext, enableLogging, maxCallableDepth);
+### 2. 配置和编译
 
-// 通过定义网格和材质来构建场景
+```powershell
+# 配置项目
+cmake -B build `
+  -G "Visual Studio 17 2022" `
+  -A x64 `
+  -T "cuda=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1" `
+  -DOptiX_INSTALL_DIR="C:\ProgramData\NVIDIA Corporation\OptiX SDK 8.0.0"
 
-SceneRef scene = context->createScene();
+# 编译 libOptixW 库
+cmake --build build --config Release --target libOptixW
 
-TriangleMeshSurfaceNodeRef mesh = context->createTriangleMeshSurfaceNode("My Mesh 1");
-{
-    Vertex vertices[] = {
-        Vertex{ Point3D(-1.5f,  0.0f, -1.5f), Normal3D(0,  1, 0), Vector3D(1,  0,  0), TexCoord2D(0.0f, 5.0f) },
-        // ...
-    };
-    // ...
-    mesh->setVertices(vertices, lengthof(vertices));
-
-    {
-        Image2DRef imgAlbedo = loadImage2D(context, "checkerboard.png", "Reflectance", "Rec709(D65) sRGB Gamma");
-        Image2DRef imgNormalAlpha = loadImage2D(context, "normal_alpha.png", "NA", "Rec709(D65)");
-
-        ShaderNodeRef nodeAlbedo = context->createShaderNode("Image2DTexture");
-        nodeAlbedo->set("image", imgAlbedo);
-        nodeAlbedo->set("min filter", "Nearest");
-        nodeAlbedo->set("mag filter", "Nearest");
-
-        ShaderNodeRef nodeNormalAlpha = context->createShaderNode("Image2DTexture");
-        nodeNormalAlpha->set("image", imgNormalAlpha);
-
-        // 可以通过连接着色器节点来灵活定义材质
-        SurfaceMaterialRef mat = context->createSurfaceMaterial("Matte");
-        mat->set("albedo", nodeAlbedo->getPlug(VLRShaderNodePlugType_Spectrum, 0));
-
-        ShaderNodeRef nodeTangent = context->createShaderNode("Tangent");
-        nodeTangent->set("tangent type", "Radial Y");
-
-        uint32_t matGroup[] = { 0, 1, 2, 0, 2, 3 };
-        mesh->addMaterialGroup(matGroup, lengthof(matGroup), mat, 
-                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Normal3D, 0), // 法线贴图
-                               nodeTangent->getPlug(VLRShaderNodePlugType_Vector3D, 0), // 切线
-                               nodeNormalAlpha->getPlug(VLRShaderNodePlugType_Alpha, 0)); // Alpha 贴图
-    }
-
-    // ...
-}
-
-// 可以通过变换构建场景图
-InternalNodeRef transformNode = context->createInternalNode("trf A");
-transformNode->setTransform(context->createStaticTransform(scale(2.0f)));
-transformNode->addChild(mesh);
-scene->addChild(transformNode);
-
-// 设置相机
-CameraRef camera = context->createCamera("Perspective");
-camera->set("position", Point3D(0, 1.5f, 6.0f));
-camera->set("aspect", (float)renderTargetSizeX / renderTargetSizeY);
-camera->set("sensitivity", 1.0f);
-camera->set("fovy", 40 * M_PI / 180);
-camera->set("lens radius", 0.0f);
-
-// 设置输出缓冲区（也可以绑定 OpenGL 缓冲区）
-context->bindOutputBuffer(1024, 1024, 0);
-
-// 开始渲染场景！
-context->setScene(scene);
-context->render(cuStream, camera, enableDenoiser, 1, firstFrame, &numAccumFrames);
+# 编译并运行 Cornell Box 测试
+cmake --build build --config Release --target cornell_box_test
+.\build\bin\Release\cornell_box_test.exe
 ```
 
-## 待办事项
-- [ ] 使渲染过程真正异步化。
-- [ ] Python 绑定
-- [ ] 简单的场景编辑器
-- [ ] 使用 NVRTC 在运行时编译着色器节点，以消除可调用程序的开销。
+### 3. 查看结果
+
+测试成功后会在项目根目录生成 `cornell_box.png`：
+
+<img src="cornell_box.png" width="512px" alt="Cornell Box">
+
+## libOptixW API 示例
+
+完整示例请参考 `libOptixW/test/cornell_box_test.cpp`。
+
+```cpp
+#include <optixw/optixw.h>
+
+// 1. 初始化 OptiX 上下文
+optixw::Context context(0);  // 使用 GPU 0
+
+// 2. 创建场景
+optixw::Scene* scene = context.createScene();
+
+// 3. 添加材质
+uint32_t whiteMat = scene->addLambertianMaterial({0.75f, 0.75f, 0.75f});
+uint32_t lightMat = scene->addEmissiveMaterial({10.0f, 10.0f, 10.0f});
+
+// 4. 添加几何体（使用 std::span 零拷贝）
+float vertices[] = { -1.0f, 0.0f, -1.0f,  1.0f, 0.0f, -1.0f,  0.0f, 2.0f, 0.0f };
+uint32_t indices[] = { 0, 1, 2 };
+scene->addTriangleMesh(std::span(vertices, 9), std::span(indices, 3), whiteMat);
+
+// 5. 添加光源
+scene->addPointLight({{0.0f, 1.8f, 0.0f}, {5.0f, 5.0f, 5.0f}});
+
+// 6. 构建加速结构
+scene->finalize();
+
+// 7. 设置相机
+optixw::Camera camera = {
+    .position = {0.0f, 1.0f, 3.0f},
+    .target = {0.0f, 1.0f, 0.0f},
+    .up = {0.0f, 1.0f, 0.0f},
+    .fovY = 45.0f * M_PI / 180.0f,
+    .aspect = 1.0f
+};
+
+// 8. 渲染
+optixw::Renderer* renderer = context.createRenderer();
+std::vector<optixw::RGB> image(1024 * 1024);
+renderer->render(scene, camera, image.data(), 1024, 1024, 64);  // 64 SPP
+```
+
+## 项目结构
+
+```
+OfflineRenderer/
+├── libOptixW/              # 新 Wavefront 渲染器（主要开发）
+│   ├── include/optixw/     # 公共 API 头文件
+│   │   ├── optixw.h        # Context, Scene, Renderer
+│   │   └── types.h         # MaterialData, RGB 等
+│   ├── src/                # CPU 端实现
+│   │   ├── context.cpp     # OptiX 初始化
+│   │   ├── scene.cpp       # 场景和加速结构管理
+│   │   ├── renderer.cpp    # 渲染循环和 Pipeline
+│   │   └── scheduler.cpp   # Wavefront 调度器
+│   ├── kernels/            # GPU 内核
+│   │   ├── ray_gen.cu      # 主光线生成
+│   │   ├── trace.cu        # OptiX 光线追踪（OptiX IR）
+│   │   ├── shade.cu        # 材质评估和 NEE
+│   │   └── compact.cu      # 队列压缩
+│   └── test/               # 测试程序
+│       └── cornell_box_test.cpp
+├── libVLR/                 # 旧 Megakernel 渲染器（参考）
+├── HostProgram/            # 演示程序
+├── cmake/                  # CMake 工具脚本
+└── .cursor/rules/          # 编译配置文档
+    ├── libvlrw-build.mdc   # 详细编译指南
+    ├── build-env.mdc       # 环境配置
+    └── cmake-build-warnings.mdc
+```
 
 ## 已验证的运行环境
-目前已在以下环境中确认程序可以正常运行。
 
+### libOptixW（当前开发环境）
+* Windows 11 (26200) & Visual Studio 2022 (17.14.36202.13)
+* NVIDIA GeForce MX550 (Turing, compute_75)
+* CUDA Toolkit 13.1.115
+* OptiX SDK 8.0.0
+* NVIDIA 驱动 581.95
+* CMake 3.31.0
+
+### libVLR（原始实现）
 * Windows 10 (21H2) & Visual Studio 2022 (17.2.4)
 * Core i9-9900K, 32GB, RTX 3080 10GB
-* NVIDIA 驱动 516.40（注意：510-512 版本存在若干 OptiX 相关问题。）
+* NVIDIA 驱动 516.40
+* CUDA 11.8
+* OptiX 7.x
 
-运行本程序需要以下库：
+## 依赖库
 
-* libVLR
-    * CUDA 12.5
-    * OptiX 8.0.0（需要 Maxwell 或更新架构的 NVIDIA GPU）
-* Host Program
-    * OpenEXR 3.1
-    * assimp 5.0
+### libOptixW
+* **必需**: CUDA Toolkit 13.1+、OptiX SDK 8.0+、GPU compute_75+
+* **内置**: stb_image_write、Taskflow（可选）
+
+### libVLR
+* **必需**: CUDA 11.8、OptiX 7.x、GPU compute_52+
+
+### HostProgram
+* OpenEXR 3.1、assimp 5.0、GLFW、gl3w（后三者已作为 submodule 包含）
+
+## 编译问题排查
+
+如遇到编译错误，请参考 `.cursor/rules/libvlrw-build.mdc`，其中包含：
+- 常见编译错误及解决方案
+- CUDA 版本兼容性问题
+- OptiX IR vs PTX 编译配置
+- 文件编码问题处理
+
+## 待办事项
+
+### libOptixW 下一步开发
+- [ ] 添加更多材质类型（Specular、GGX 微表面）
+- [ ] 实现环境光照（IBL）
+- [ ] 添加纹理支持
+- [ ] 性能优化（队列压缩、流式多重采样）
+- [ ] 降噪器集成（OptiX Denoiser）
+- [ ] 多 GPU 支持
+
+### libVLR 改进
+- [ ] 迁移到 CUDA 13+ 和 OptiX 8+
+- [ ] Python 绑定
+- [ ] 简单的场景编辑器
 
 ## 注意事项
-项目中包含一些加载模型数据和纹理的场景文件，但这些资产并**未**包含在本仓库中。
+* libVLR 的场景文件引用的模型和纹理资产**未**包含在本仓库中
+* libVLR 与 libOptixW 使用不同的 CUDA/OptiX 版本，建议分别编译
+* 推荐使用 libOptixW 进行新开发
+
 
 ## 参考文献
 [Davidovi&#269;2014] "Progressive Light Transport Simulation on the GPU: Survey and Improvements"\
@@ -150,29 +227,6 @@ context->render(cuStream, camera, enableDenoiser, 1, firstFrame, &numAccumFrames
 [Meng2015] "Physically Meaningful Rendering using Tristimulus Colours"\
 [Veach1997] "ROBUST MONTE CARLO METHODS FOR LIGHT TRANSPORT SIMULATION"
 
-## 画廊
-<img src = "gallery/CornellBox_var.jpg" width = "512px" alt = "CornellBox_var.jpg"><br>
-经典 Cornell Box 场景的变体。左侧盒子具有各向异性 BRDF，沿其局部 Y 轴具有环形切线（沿切线方向更光滑，沿副切线方向更粗糙）。
-<br><br>
-<img src = "gallery/UE4LikeBRDF.jpg" width = "512px" alt = "UE4LikeBRDF.jpg"><br>
-一个具有类 UE4 或 Frostbite 3.0 风格 BRDF 的物体（纹理从 Substance Painter 导出），由面积光源和环境光照明。
-
-模型: Substance Painter\
-IBL 图像: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
-<br><br>
-<img src = "gallery/dispersive_caustics_closeup.jpg" width = "512px" alt = "dispersive_caustics_closeup.jpg"><br>
-由方向性面积光源照射 Stanford Bunny 模型产生的焦散效果。\
-渲染器在此处使用了光谱渲染。
-
-模型: [Stanford Bunny](http://graphics.stanford.edu/data/3Dscanrep/)
-<br><br>
-<img src = "gallery/Rungholt_view1.jpg" width = "768px" alt = "Rungholt_view1.jpg"><br>
-<img src = "gallery/Rungholt_view2.jpg" width = "768px" alt = "Rungholt_view2.jpg"><br>
-由室外环境光照明的 Rungholt 模型。
-
-模型: Rungholt，来自 Morgan McGuire 的 [Computer Graphics Archive](https://casual-effects.com/data)\
-IBL 图像 1: [Direct HDR Capture of the Sun and Sky](https://vgl.ict.usc.edu/Data/SkyProbes/)\
-IBL 图像 2: [sIBL Archive](http://www.hdrlabs.com/sibl/archive.html)
-
 ----
-2022 [@Shocker_0x15](https://twitter.com/Shocker_0x15)
+2022 [@Shocker_0x15](https://twitter.com/Shocker_0x15)\
+2026 libOptixW 实现

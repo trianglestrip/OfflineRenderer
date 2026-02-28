@@ -25,13 +25,54 @@ void savePPM(const char* filename, const RGB* image, uint32_t width, uint32_t he
     std::cout << "Saved " << filename << std::endl;
 }
 
-// Build Cornell Box scene
+// Create sphere mesh (UV sphere)
+void createSphere(std::vector<float>& vertices, std::vector<uint32_t>& indices, 
+                  float cx, float cy, float cz, float radius, int segments = 16, int rings = 12) {
+    vertices.clear();
+    indices.clear();
+    
+    // Generate vertices
+    for (int ring = 0; ring <= rings; ++ring) {
+        float phi = 3.14159f * ring / rings;
+        for (int seg = 0; seg <= segments; ++seg) {
+            float theta = 2.0f * 3.14159f * seg / segments;
+            
+            float x = cx + radius * sinf(phi) * cosf(theta);
+            float y = cy + radius * cosf(phi);
+            float z = cz + radius * sinf(phi) * sinf(theta);
+            
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+        }
+    }
+    
+    // Generate indices
+    for (int ring = 0; ring < rings; ++ring) {
+        for (int seg = 0; seg < segments; ++seg) {
+            int current = ring * (segments + 1) + seg;
+            int next = current + segments + 1;
+            
+            indices.push_back(current);
+            indices.push_back(next);
+            indices.push_back(current + 1);
+            
+            indices.push_back(current + 1);
+            indices.push_back(next);
+            indices.push_back(next + 1);
+        }
+    }
+}
+
+// Build Cornell Box scene with metal cube, lambertian cube, and glass sphere
 void buildCornellBox(Scene* scene) {
     // Create materials
     uint32_t whiteMat = scene->addLambertianMaterial(RGB(0.75f, 0.75f, 0.75f));
     uint32_t redMat = scene->addLambertianMaterial(RGB(0.75f, 0.25f, 0.25f));
     uint32_t blueMat = scene->addLambertianMaterial(RGB(0.25f, 0.25f, 0.75f));
     uint32_t lightMat = scene->addEmissiveMaterial(RGB(10.0f, 10.0f, 10.0f));
+    uint32_t metalMat = scene->addMetalMaterial(RGB(0.9f, 0.9f, 0.9f), 0.1f);  // Shiny metal
+    uint32_t glassMat = scene->addGlassMaterial(RGB(1.0f, 1.0f, 1.0f), 1.5f);  // Glass (IOR=1.5)
     
     // Room dimensions
     const float L = -1.0f, R = 1.0f;  // Left, Right
@@ -83,10 +124,30 @@ void buildCornellBox(Scene* scene) {
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
     }
     
-    // Short box (white)
+    // Metal cube (left, shiny)
     {
-        const float s = 0.3f, h = 0.6f;
-        const float cx = 0.35f, cz = 0.35f;
+        const float s = 0.25f, h = 0.5f;
+        const float cx = -0.5f, cz = 0.3f;
+        float verts[] = {
+            // Top
+            cx-s, h, cz-s,  cx+s, h, cz-s,  cx+s, h, cz+s,  cx-s, h, cz+s,
+            // Bottom
+            cx-s, B, cz-s,  cx+s, B, cz-s,  cx+s, B, cz+s,  cx-s, B, cz+s,
+        };
+        uint32_t inds[] = {
+            0, 1, 2, 0, 2, 3,  // Top
+            4, 5, 1, 4, 1, 0,  // Front
+            5, 6, 2, 5, 2, 1,  // Right
+            6, 7, 3, 6, 3, 2,  // Back
+            7, 4, 0, 7, 0, 3   // Left
+        };
+        scene->addTriangleMesh(std::span(verts, 24), std::span(inds, 30), metalMat);
+    }
+    
+    // Lambertian cube (right, white)
+    {
+        const float s = 0.25f, h = 0.5f;
+        const float cx = 0.5f, cz = 0.3f;
         float verts[] = {
             // Top
             cx-s, h, cz-s,  cx+s, h, cz-s,  cx+s, h, cz+s,  cx-s, h, cz+s,
@@ -103,24 +164,12 @@ void buildCornellBox(Scene* scene) {
         scene->addTriangleMesh(std::span(verts, 24), std::span(inds, 30), whiteMat);
     }
     
-    // Tall box (white)
+    // Glass sphere (center, transparent)
     {
-        const float s = 0.3f, h = 1.2f;
-        const float cx = -0.35f, cz = -0.35f;
-        float verts[] = {
-            // Top
-            cx-s, h, cz-s,  cx+s, h, cz-s,  cx+s, h, cz+s,  cx-s, h, cz+s,
-            // Bottom
-            cx-s, B, cz-s,  cx+s, B, cz-s,  cx+s, B, cz+s,  cx-s, B, cz+s,
-        };
-        uint32_t inds[] = {
-            0, 1, 2, 0, 2, 3,  // Top
-            4, 5, 1, 4, 1, 0,  // Front
-            5, 6, 2, 5, 2, 1,  // Right
-            6, 7, 3, 6, 3, 2,  // Back
-            7, 4, 0, 7, 0, 3   // Left
-        };
-        scene->addTriangleMesh(std::span(verts, 24), std::span(inds, 30), whiteMat);
+        std::vector<float> verts;
+        std::vector<uint32_t> inds;
+        createSphere(verts, inds, 0.0f, 0.4f, -0.2f, 0.3f, 20, 15);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     
     std::cout << "[Test] Cornell Box scene built" << std::endl;
