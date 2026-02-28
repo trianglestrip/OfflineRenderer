@@ -5,23 +5,23 @@
 #include <cmath>
 #include <algorithm>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 using namespace optixw;
 
-// Save image as PPM
-void savePPM(const char* filename, const RGB* image, uint32_t width, uint32_t height) {
-    std::ofstream file(filename, std::ios::binary);
-    file << "P6\n" << width << " " << height << "\n255\n";
+// Save image as PNG with gamma correction
+void savePNG(const char* filename, const RGB* image, uint32_t width, uint32_t height) {
+    std::vector<uint8_t> pixels(width * height * 3);
     
     for (uint32_t i = 0; i < width * height; ++i) {
         float gamma = 1.0f / 2.2f;
-        uint8_t r = static_cast<uint8_t>(std::pow(std::clamp(image[i].r, 0.0f, 1.0f), gamma) * 255);
-        uint8_t g = static_cast<uint8_t>(std::pow(std::clamp(image[i].g, 0.0f, 1.0f), gamma) * 255);
-        uint8_t b = static_cast<uint8_t>(std::pow(std::clamp(image[i].b, 0.0f, 1.0f), gamma) * 255);
-        file.write(reinterpret_cast<const char*>(&r), 1);
-        file.write(reinterpret_cast<const char*>(&g), 1);
-        file.write(reinterpret_cast<const char*>(&b), 1);
+        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].r, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(std::clamp(image[i].g, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(std::clamp(image[i].b, 0.0f, 1.0f), gamma) * 255);
     }
     
+    stbi_write_png(filename, width, height, 3, pixels.data(), width * 3);
     std::cout << "Saved " << filename << std::endl;
 }
 
@@ -210,8 +210,8 @@ int main() {
         
         renderer->render(scene, camera, image.data(), width, height, spp, false);
         
-        // Save image
-        savePPM("cornell_box.ppm", image.data(), width, height);
+        // Save image to gallery
+        savePNG("../../../gallery/cornell_box.png", image.data(), width, height);
         
         std::cout << "[Test] Test completed successfully" << std::endl;
         

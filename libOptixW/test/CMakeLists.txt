@@ -10,6 +10,7 @@ function(add_optixw_test TEST_NAME SOURCE_FILE)
             ${CMAKE_CURRENT_SOURCE_DIR}/../include
             ${OptiX_INSTALL_DIR}/include
             ${CUDAToolkit_INCLUDE_DIRS}
+            ${CMAKE_SOURCE_DIR}/ext/stb
     )
     
     target_link_libraries(${TEST_NAME}
