@@ -5,6 +5,7 @@
 #pragma warning(disable:4819)
 
 #include <optixw/types.h>
+#include <optixw/core/math_types.h>
 #include <memory>
 #include <span>
 
@@ -19,40 +20,6 @@ class Impl;
 // Forward declarations
 class Scene;
 class Renderer;
-
-// 3D vector type for positions/directions
-struct Vec3 {
-    float x, y, z;
-    Vec3() : x(0), y(0), z(0) {}
-    Vec3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
-};
-
-// Camera parameters
-struct Camera {
-    Vec3 position;
-    Vec3 target;
-    Vec3 up;
-    float fovY;
-    float aspect;
-};
-
-// Point light
-struct PointLight {
-    Vec3 position;
-    Vec3 intensity;
-};
-
-// Area light
-struct AreaLight {
-    Vec3 position;
-    Vec3 normal;
-    Vec3 tangent;
-    Vec3 bitangent;
-    float width;
-    float height;
-    Vec3 emission;
-    bool doubleSided;
-};
 
 // Material type enum
 enum class MaterialType : uint32_t {

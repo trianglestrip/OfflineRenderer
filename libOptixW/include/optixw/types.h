@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optixw/core/math_types.h>
 #include <cuda_runtime.h>
 #include <optix.h>
 

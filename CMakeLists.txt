@@ -75,12 +75,12 @@ endfunction()
 
 
 # Taskflow (header-only library for task-parallel programming)
-# Currently not used by libOptixW
-# option(TF_BUILD_EXAMPLES "Build Taskflow examples" OFF)
-# option(TF_BUILD_TESTS "Build Taskflow tests" OFF)
-# option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
-# add_subdirectory(ext/taskflow)
-# set_project_group("External" "ext/taskflow")
+# 用于 libOptixW 的 CPU 端并行任务调度
+option(TF_BUILD_EXAMPLES "Build Taskflow examples" OFF)
+option(TF_BUILD_TESTS "Build Taskflow tests" OFF)
+option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
+add_subdirectory(ext/taskflow)
+set_project_group("External" "ext/taskflow")
 
 
 

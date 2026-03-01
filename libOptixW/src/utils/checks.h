@@ -1,3 +1,4 @@
+// UTF-8 BOM - 确保 MSVC 正确识别中文注释
 #pragma once
 
 #include <optix.h>
@@ -7,6 +8,8 @@
 #include <stdexcept>
 #include <string>
 
+// OPTIX_CHECK - OptiX API 调用错误检查宏
+// 用法: OPTIX_CHECK(optixDeviceContextCreate(...));
 #define OPTIX_CHECK(call)                                                      \
     do {                                                                       \
         OptixResult res = call;                                                \
@@ -18,6 +21,8 @@
         }                                                                      \
     } while (0)
 
+// CUDA_CHECK - CUDA Runtime API 调用错误检查宏
+// 用法: CUDA_CHECK(cudaMalloc(...));
 #define CUDA_CHECK(call)                                                       \
     do {                                                                       \
         cudaError_t error = call;                                              \
@@ -28,6 +33,8 @@
         }                                                                      \
     } while (0)
 
+// CU_CHECK - CUDA Driver API 调用错误检查宏
+// 用法: CU_CHECK(cuMemAlloc(...));
 #define CU_CHECK(call)                                                         \
     do {                                                                       \
         CUresult error = call;                                                 \

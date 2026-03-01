@@ -3,7 +3,7 @@
 #include "optixw/launch_params.h"
 #include "optixw/wavefront_kernel_params.h"
 #include "scene_internal.h"
-#include "checks.h"
+#include "utils/checks.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -20,7 +20,7 @@
 #undef max
 #endif
 #include <cmath>
-
+#include "utils/checks.h"
 #include "optixw/renderer_impl.h"
 
 namespace optixw {

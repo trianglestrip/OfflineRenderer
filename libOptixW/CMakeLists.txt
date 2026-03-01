@@ -16,26 +16,64 @@ endif()
 
 message(STATUS "Using OptiX SDK: ${OptiX_INSTALL_DIR}")
 
-# Sources
+# Sources - CPU 层代码（模块化组织）
 set(OPTIXW_SOURCES
+    # 核心模块（保留旧代码以便逐步迁移）
     "src/context.cpp"
     "src/scene.cpp"
     "src/renderer.cpp"
     "src/renderer_pipeline.cpp"
     "src/renderer_loop.cpp"
-    "src/scheduler.cpp"
+    
+    # Core 模块 - 核心基础设施
+    "src/core/task_scheduler.cpp"
+    "src/core/buffer_manager.cpp"
+    
+    # Rendering 模块 - 渲染管线
+    "src/rendering/pipeline.cpp"
+    "src/rendering/kernel_manager.cpp"
+    "src/rendering/denoiser.cpp"
+    
+    # Scene 模块 - 场景数据管理
+    "src/scene/geometry_manager.cpp"
+    "src/scene/material_manager.cpp"
+    "src/scene/texture_manager.cpp"
+    "src/scene/light_manager.cpp"
+    
+    # Utils 模块 - 工具函数
+    "src/utils/path_utils.cpp"
 )
 
 set(OPTIXW_HEADERS
+    # 公开头文件
     "include/optixw/optixw.h"
     "include/optixw/types.h"
     "include/optixw/launch_params.h"
     "include/optixw/wavefront_kernel_params.h"
+    
+    # Core 模块 - 核心基础设施
+    "include/optixw/core/math_types.h"
+    "include/optixw/core/task_scheduler.h"
+    "include/optixw/core/buffer_manager.h"
+    
+    # Rendering 模块 - 渲染管线
+    "include/optixw/rendering/pipeline.h"
+    "include/optixw/rendering/kernel_manager.h"
+    "include/optixw/rendering/denoiser.h"
+    
+    # Scene 模块 - 场景数据管理
+    "include/optixw/scene/geometry_manager.h"
+    "include/optixw/scene/material_manager.h"
+    "include/optixw/scene/texture_manager.h"
+    "include/optixw/scene/light_manager.h"
+    
+    # Utils 模块 - 工具函数
+    "src/utils/checks.h"
+    "src/utils/path_utils.h"
 )
 
 # CUDA kernels (will compile to PTX)
 set(OPTIXW_KERNELS
-    "kernels/ray_gen.cu"
     "kernels/trace.cu"
     "kernels/shade.cu"
     "kernels/compact.cu"
@@ -74,6 +112,7 @@ target_link_libraries(${TARGET_NAME}
         CUDA::cuda_driver
         windowscodecs
         ole32
+        Taskflow  # 添加 Taskflow 依赖
 )
 
 # C++20 standard

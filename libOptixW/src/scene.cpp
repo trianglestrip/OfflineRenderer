@@ -1,7 +1,7 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
 #include "scene_internal.h"
-#include "checks.h"
+#include "utils/checks.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>

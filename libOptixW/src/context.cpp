@@ -1,6 +1,6 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
-#include "checks.h"
+#include "utils/checks.h"
 #include <optix.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
