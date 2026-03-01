@@ -208,7 +208,7 @@ int main() {
         camera.fovY = 40.0f * 3.14159f / 180.0f;
         camera.aspect = 1.0f;
         
-        const RenderConfig cfg = render_config::load("cornell_box");
+        const ::RenderConfig cfg = render_config::load("cornell_box");
         const uint32_t width = cfg.width;
         const uint32_t height = cfg.height;
         const uint32_t spp = cfg.spp;

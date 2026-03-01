@@ -4,6 +4,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <string>
+#include <optixw/types.h>
 
 namespace optixw {
 
@@ -46,28 +47,21 @@ public:
     void launchNormalizeAccum(void** params, dim3 gridDim, dim3 blockDim, CUstream stream = 0);
 
     // 获取核句柄（供高级用户使用）
-    CUfunction getShadeKernel() const { return m_shadeKernel; }
-    CUfunction getCompactKernel() const { return m_compactKernel; }
-    CUfunction getScaleKernel() const { return m_scaleKernel; }
-    CUfunction getMergeTileKernel() const { return m_mergeKernel; }
-    CUfunction getNormalizeAccumKernel() const { return m_normalizeKernel; }
+    CUfunction getShadeKernel() const { return m_functions.shadeKernel; }
+    CUfunction getCompactKernel() const { return m_functions.compactKernel; }
+    CUfunction getScaleKernel() const { return m_functions.scaleKernel; }
+    CUfunction getMergeTileKernel() const { return m_functions.mergeKernel; }
+    CUfunction getNormalizeAccumKernel() const { return m_functions.normalizeKernel; }
 
     // 检查核是否已加载
     bool isLoaded() const { return m_loaded; }
 
 private:
     // 核模块
-    CUmodule m_shadeModule;
-    CUmodule m_compactModule;
-    CUmodule m_scaleModule;
-    CUmodule m_mergeModule;
+    KernelModules m_modules;
 
     // 核函数句柄
-    CUfunction m_shadeKernel;
-    CUfunction m_compactKernel;
-    CUfunction m_scaleKernel;
-    CUfunction m_mergeKernel;
-    CUfunction m_normalizeKernel;
+    KernelFunctions m_functions;
 
     // 加载状态
     bool m_loaded;

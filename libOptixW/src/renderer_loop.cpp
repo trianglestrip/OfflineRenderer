@@ -21,13 +21,13 @@ void Impl::renderSample(
     uint32_t height,
     uint32_t sampleIndex)
 {
-    if (numMaterials == 0 || d_materials == 0) {
+    if (materialTextureBuffers.numMaterials == 0 || materialTextureBuffers.d_materials == 0) {
         std::cout << "[Warning] No materials available for shading" << std::endl;
         return;
     }
 
     // Each sample must restart path state from primary rays.
-    CUDA_CHECK(cudaMemset((void*)d_rayPool, 0, maxRays * sizeof(RayState)));
+    CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_rayPool, 0, maxRays * sizeof(RayState)));
 
     // Initialize active rays (all pixels)
     std::vector<uint32_t> activeIndices(numPixels);
@@ -36,14 +36,14 @@ void Impl::renderSample(
     }
     
     CUDA_CHECK(cudaMemcpy(
-        (void*)d_activeIndices,
+        (void*)wavefrontBuffers.d_activeIndices,
         activeIndices.data(),
         numPixels * sizeof(uint32_t),
         cudaMemcpyHostToDevice
     ));
     
-    CUdeviceptr activeIn = d_activeIndices;
-    CUdeviceptr activeOut = d_compactIndices;
+    CUdeviceptr activeIn = wavefrontBuffers.d_activeIndices;
+    CUdeviceptr activeOut = wavefrontBuffers.d_compactIndices;
     uint32_t numActive = numPixels;
     
     // Wavefront rendering loop.
@@ -55,25 +55,25 @@ void Impl::renderSample(
         LaunchParams launchParams = {};
         launchParams.traversable = gasHandle;
         launchParams.vertices = reinterpret_cast<const float*>(d_vertices);
-        launchParams.texcoords = reinterpret_cast<const float*>(d_texcoords);
+        launchParams.texcoords = reinterpret_cast<const float*>(materialTextureBuffers.d_texcoords);
         launchParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
         launchParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
-        launchParams.rayPool = reinterpret_cast<RayState*>(d_rayPool);
+        launchParams.rayPool = reinterpret_cast<RayState*>(wavefrontBuffers.d_rayPool);
         launchParams.activeIndices = reinterpret_cast<uint32_t*>(activeIn);
-        launchParams.hitBuffer = reinterpret_cast<HitInfo*>(d_hitBuffer);
+        launchParams.hitBuffer = reinterpret_cast<HitInfo*>(wavefrontBuffers.d_hitBuffer);
         launchParams.camera = camera;
         launchParams.width = width;
         launchParams.height = height;
         launchParams.sampleIndex = sampleIndex;
         launchParams.numActive = numActive;
         launchParams.environmentRadiance = environmentRadiance;
-        launchParams.environmentMap = reinterpret_cast<const float4*>(d_environmentMap);
-        launchParams.environmentMapWidth = environmentMapWidth;
-        launchParams.environmentMapHeight = environmentMapHeight;
-        launchParams.environmentMapScale = environmentMapScale;
+        launchParams.environmentMap = reinterpret_cast<const float4*>(environmentMap.d_map);
+        launchParams.environmentMapWidth = environmentMap.width;
+        launchParams.environmentMapHeight = environmentMap.height;
+        launchParams.environmentMapScale = environmentMap.scale;
         
         CUDA_CHECK(cudaMemcpy(
-            (void*)d_launchParams,
+            (void*)launchParamsBuffer.d_launchParams,
             &launchParams,
             sizeof(LaunchParams),
             cudaMemcpyHostToDevice
@@ -83,7 +83,7 @@ void Impl::renderSample(
         OPTIX_CHECK(optixLaunch(
             pipeline,
             0,  // CUDA stream
-            d_launchParams,
+            launchParamsBuffer.d_launchParams,
             sizeof(LaunchParams),
             &sbt,
             numActive,
@@ -94,34 +94,34 @@ void Impl::renderSample(
         const uint32_t numBlocks = (numActive + blockSize - 1) / blockSize;
 
         ShadeKernelParams shadeParams = {};
-        shadeParams.rayPool = reinterpret_cast<RayState*>(d_rayPool);
+        shadeParams.rayPool = reinterpret_cast<RayState*>(wavefrontBuffers.d_rayPool);
         shadeParams.activeIndices = reinterpret_cast<const uint32_t*>(activeIn);
-        shadeParams.hitBuffer = reinterpret_cast<const HitInfo*>(d_hitBuffer);
+        shadeParams.hitBuffer = reinterpret_cast<const HitInfo*>(wavefrontBuffers.d_hitBuffer);
         shadeParams.vertices = reinterpret_cast<const float*>(d_vertices);
-        shadeParams.texcoords = reinterpret_cast<const float*>(d_texcoords);
+        shadeParams.texcoords = reinterpret_cast<const float*>(materialTextureBuffers.d_texcoords);
         shadeParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
         shadeParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
-        shadeParams.materials = reinterpret_cast<const MaterialData*>(d_materials);
-        shadeParams.textures = reinterpret_cast<const Texture2DData*>(d_textures);
-        shadeParams.accumBuffer = reinterpret_cast<float3*>(d_accumBuffer);
+        shadeParams.materials = reinterpret_cast<const MaterialData*>(materialTextureBuffers.d_materials);
+        shadeParams.textures = reinterpret_cast<const Texture2DData*>(materialTextureBuffers.d_textures);
+        shadeParams.accumBuffer = reinterpret_cast<float3*>(accumBuffers.d_accumBuffer);
         // newly added guidance buffers - renderer will fill them before
         // invoking the denoiser if it is enabled.  They may remain null
         // when denoising is off.
-        shadeParams.albedoBuffer = reinterpret_cast<float3*>(d_albedoBuffer);
-        shadeParams.normalBuffer = reinterpret_cast<float3*>(d_normalBuffer);
-        shadeParams.numTriangles = numTriangles;
-        shadeParams.numMaterials = numMaterials;
-        shadeParams.numTextures = numTextures;
+        shadeParams.albedoBuffer = reinterpret_cast<float3*>(accumBuffers.d_albedoBuffer);
+        shadeParams.normalBuffer = reinterpret_cast<float3*>(accumBuffers.d_normalBuffer);
+        shadeParams.numTriangles = materialTextureBuffers.numTriangles;
+        shadeParams.numMaterials = materialTextureBuffers.numMaterials;
+        shadeParams.numTextures = materialTextureBuffers.numTextures;
         shadeParams.numActive = numActive;
         shadeParams.environmentRadiance = environmentRadiance;
-        shadeParams.environmentMap = reinterpret_cast<const float4*>(d_environmentMap);
-        shadeParams.environmentMapWidth = environmentMapWidth;
-        shadeParams.environmentMapHeight = environmentMapHeight;
-        shadeParams.environmentMapScale = environmentMapScale;
+        shadeParams.environmentMap = reinterpret_cast<const float4*>(environmentMap.d_map);
+        shadeParams.environmentMapWidth = environmentMap.width;
+        shadeParams.environmentMapHeight = environmentMap.height;
+        shadeParams.environmentMapScale = environmentMap.scale;
 
         void* shadeArgs[] = { &shadeParams };
         CU_CHECK(cuLaunchKernel(
-            shadeKernel,
+            kernelFunctions.shadeKernel,
             numBlocks, 1, 1,
             blockSize, 1, 1,
             0,
@@ -130,18 +130,18 @@ void Impl::renderSample(
             nullptr
         ));
 
-        CUDA_CHECK(cudaMemset((void*)d_compactCounter, 0, sizeof(uint32_t)));
+        CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_compactCounter, 0, sizeof(uint32_t)));
 
         CompactKernelParams compactParams = {};
-        compactParams.rayPool = reinterpret_cast<const RayState*>(d_rayPool);
+        compactParams.rayPool = reinterpret_cast<const RayState*>(wavefrontBuffers.d_rayPool);
         compactParams.activeIndicesIn = reinterpret_cast<const uint32_t*>(activeIn);
         compactParams.activeIndicesOut = reinterpret_cast<uint32_t*>(activeOut);
-        compactParams.counter = reinterpret_cast<uint32_t*>(d_compactCounter);
+        compactParams.counter = reinterpret_cast<uint32_t*>(wavefrontBuffers.d_compactCounter);
         compactParams.numActive = numActive;
 
         void* compactArgs[] = { &compactParams };
         CU_CHECK(cuLaunchKernel(
-            compactKernel,
+            kernelFunctions.compactKernel,
             numBlocks, 1, 1,
             blockSize, 1, 1,
             0,
@@ -152,7 +152,7 @@ void Impl::renderSample(
 
         CUDA_CHECK(cudaMemcpy(
             &numActive,
-            (void*)d_compactCounter,
+            (void*)wavefrontBuffers.d_compactCounter,
             sizeof(uint32_t),
             cudaMemcpyDeviceToHost
         ));

@@ -7,15 +7,8 @@
 namespace optixw {
 
 KernelManager::KernelManager()
-    : m_shadeModule(nullptr)
-    , m_compactModule(nullptr)
-    , m_scaleModule(nullptr)
-    , m_mergeModule(nullptr)
-    , m_shadeKernel(nullptr)
-    , m_compactKernel(nullptr)
-    , m_scaleKernel(nullptr)
-    , m_mergeKernel(nullptr)
-    , m_normalizeKernel(nullptr)
+    : m_modules({nullptr, nullptr, nullptr, nullptr})
+    , m_functions({nullptr, nullptr, nullptr, nullptr, nullptr})
     , m_loaded(false)
 {
 }
@@ -34,24 +27,24 @@ void KernelManager::loadKernels() {
 
     // 加载着色核
     const std::string shadeCubin = utils::findCubinPath("shade.cubin").string();
-    CU_CHECK(cuModuleLoad(&m_shadeModule, shadeCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&m_shadeKernel, m_shadeModule, "shade"));
+    CU_CHECK(cuModuleLoad(&m_modules.shadeModule, shadeCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&m_functions.shadeKernel, m_modules.shadeModule, "shade"));
 
     // 加载压缩核
     const std::string compactCubin = utils::findCubinPath("compact.cubin").string();
-    CU_CHECK(cuModuleLoad(&m_compactModule, compactCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&m_compactKernel, m_compactModule, "compact"));
+    CU_CHECK(cuModuleLoad(&m_modules.compactModule, compactCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&m_functions.compactKernel, m_modules.compactModule, "compact"));
 
     // 加载缩放核
     const std::string scaleCubin = utils::findCubinPath("scale.cubin").string();
-    CU_CHECK(cuModuleLoad(&m_scaleModule, scaleCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&m_scaleKernel, m_scaleModule, "scale_to_float4"));
+    CU_CHECK(cuModuleLoad(&m_modules.scaleModule, scaleCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&m_functions.scaleKernel, m_modules.scaleModule, "scale_to_float4"));
 
     // 加载降噪合并核
     const std::string mergeCubin = utils::findCubinPath("denoise_merge.cubin").string();
-    CU_CHECK(cuModuleLoad(&m_mergeModule, mergeCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&m_mergeKernel, m_mergeModule, "merge_tile"));
-    CU_CHECK(cuModuleGetFunction(&m_normalizeKernel, m_mergeModule, "normalize_accum"));
+    CU_CHECK(cuModuleLoad(&m_modules.mergeModule, mergeCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&m_functions.mergeKernel, m_modules.mergeModule, "merge_tile"));
+    CU_CHECK(cuModuleGetFunction(&m_functions.normalizeKernel, m_modules.mergeModule, "normalize_accum"));
 
     m_loaded = true;
     std::cout << "[KernelManager] Wavefront kernels loaded" << std::endl;
@@ -61,29 +54,29 @@ void KernelManager::unloadKernels() {
     if (!m_loaded) return;
 
     // 卸载模块
-    if (m_shadeModule) {
-        CU_CHECK(cuModuleUnload(m_shadeModule));
-        m_shadeModule = nullptr;
+    if (m_modules.shadeModule) {
+        CU_CHECK(cuModuleUnload(m_modules.shadeModule));
+        m_modules.shadeModule = nullptr;
     }
-    if (m_compactModule) {
-        CU_CHECK(cuModuleUnload(m_compactModule));
-        m_compactModule = nullptr;
+    if (m_modules.compactModule) {
+        CU_CHECK(cuModuleUnload(m_modules.compactModule));
+        m_modules.compactModule = nullptr;
     }
-    if (m_scaleModule) {
-        CU_CHECK(cuModuleUnload(m_scaleModule));
-        m_scaleModule = nullptr;
+    if (m_modules.scaleModule) {
+        CU_CHECK(cuModuleUnload(m_modules.scaleModule));
+        m_modules.scaleModule = nullptr;
     }
-    if (m_mergeModule) {
-        CU_CHECK(cuModuleUnload(m_mergeModule));
-        m_mergeModule = nullptr;
+    if (m_modules.mergeModule) {
+        CU_CHECK(cuModuleUnload(m_modules.mergeModule));
+        m_modules.mergeModule = nullptr;
     }
 
     // 清空核句柄
-    m_shadeKernel = nullptr;
-    m_compactKernel = nullptr;
-    m_scaleKernel = nullptr;
-    m_mergeKernel = nullptr;
-    m_normalizeKernel = nullptr;
+    m_functions.shadeKernel = nullptr;
+    m_functions.compactKernel = nullptr;
+    m_functions.scaleKernel = nullptr;
+    m_functions.mergeKernel = nullptr;
+    m_functions.normalizeKernel = nullptr;
 
     m_loaded = false;
     std::cout << "[KernelManager] Kernels unloaded" << std::endl;
@@ -91,7 +84,7 @@ void KernelManager::unloadKernels() {
 
 void KernelManager::launchShade(void** params, dim3 gridDim, dim3 blockDim, CUstream stream) {
     CU_CHECK(cuLaunchKernel(
-        m_shadeKernel,
+        m_functions.shadeKernel,
         gridDim.x, gridDim.y, gridDim.z,
         blockDim.x, blockDim.y, blockDim.z,
         0,  // 共享内存大小
@@ -103,7 +96,7 @@ void KernelManager::launchShade(void** params, dim3 gridDim, dim3 blockDim, CUst
 
 void KernelManager::launchCompact(void** params, dim3 gridDim, dim3 blockDim, CUstream stream) {
     CU_CHECK(cuLaunchKernel(
-        m_compactKernel,
+        m_functions.compactKernel,
         gridDim.x, gridDim.y, gridDim.z,
         blockDim.x, blockDim.y, blockDim.z,
         0,
@@ -115,7 +108,7 @@ void KernelManager::launchCompact(void** params, dim3 gridDim, dim3 blockDim, CU
 
 void KernelManager::launchScale(void** params, dim3 gridDim, dim3 blockDim, CUstream stream) {
     CU_CHECK(cuLaunchKernel(
-        m_scaleKernel,
+        m_functions.scaleKernel,
         gridDim.x, gridDim.y, gridDim.z,
         blockDim.x, blockDim.y, blockDim.z,
         0,
@@ -127,7 +120,7 @@ void KernelManager::launchScale(void** params, dim3 gridDim, dim3 blockDim, CUst
 
 void KernelManager::launchMergeTile(void** params, dim3 gridDim, dim3 blockDim, CUstream stream) {
     CU_CHECK(cuLaunchKernel(
-        m_mergeKernel,
+        m_functions.mergeKernel,
         gridDim.x, gridDim.y, gridDim.z,
         blockDim.x, blockDim.y, blockDim.z,
         0,
@@ -139,7 +132,7 @@ void KernelManager::launchMergeTile(void** params, dim3 gridDim, dim3 blockDim, 
 
 void KernelManager::launchNormalizeAccum(void** params, dim3 gridDim, dim3 blockDim, CUstream stream) {
     CU_CHECK(cuLaunchKernel(
-        m_normalizeKernel,
+        m_functions.normalizeKernel,
         gridDim.x, gridDim.y, gridDim.z,
         blockDim.x, blockDim.y, blockDim.z,
         0,

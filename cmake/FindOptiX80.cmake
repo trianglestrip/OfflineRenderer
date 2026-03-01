@@ -6,6 +6,11 @@ if(DEFINED ENV{OptiX_INSTALL_DIR} AND NOT OptiX_INSTALL_DIR)
     set(OptiX_INSTALL_DIR "$ENV{OptiX_INSTALL_DIR}" CACHE PATH "Path to OptiX SDK (from env)" FORCE)
 endif()
 
+# Set default path if not specified
+if(NOT OptiX_INSTALL_DIR)
+    set(OptiX_INSTALL_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 8.0.0" CACHE PATH "OptiX SDK install directory" FORCE)
+endif()
+
 if(OptiX_INSTALL_DIR)
     find_path(OPTIX80_INCLUDE_DIR
         NAMES optix.h

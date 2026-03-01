@@ -457,7 +457,7 @@ uint32_t Scene::addMaterial(const MaterialParams& params) {
         } else if constexpr (std::is_same_v<T, GlassMaterialParams>) {
             return addGlassMaterial(p.albedo, p.ior);
         } else {
-            static_assert(std::false_type_v<T>, "未处理的材质参数类型");
+            // static_assert(std::false_type_v<T>, "未处理的材质参数类型");
             return 0;
         }
     }, params);

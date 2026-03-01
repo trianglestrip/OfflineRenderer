@@ -5,8 +5,11 @@
 #include <optix_stubs.h>
 #include <cuda.h>
 #include <cstdint>
+#include <optixw/types.h>
 
 namespace optixw {
+
+
 
 // Denoiser - CPU 层 OptiX 降噪器管理
 // 职责：
@@ -57,14 +60,14 @@ public:
     void destroy();
 
     // 访问器
-    bool isSetup() const { return m_setup; }
-    uint32_t getWidth() const { return m_width; }
-    uint32_t getHeight() const { return m_height; }
+    bool isSetup() const { return m_params.setup; }
+    uint32_t getWidth() const { return m_params.width; }
+    uint32_t getHeight() const { return m_params.height; }
     
     // 获取降噪器缓冲（供外部使用）
-    CUdeviceptr getStateBuffer() const { return m_d_state; }
-    CUdeviceptr getScratchBuffer() const { return m_d_scratch; }
-    CUdeviceptr getIntensityBuffer() const { return m_d_intensity; }
+    CUdeviceptr getStateBuffer() const { return m_buffers.d_state; }
+    CUdeviceptr getScratchBuffer() const { return m_buffers.d_scratch; }
+    CUdeviceptr getIntensityBuffer() const { return m_buffers.d_intensity; }
     
     // ==================== 结构体版本的方法 ====================
     void setup(const DenoiserSetupParams& params);
@@ -79,24 +82,13 @@ private:
     OptixDenoiser m_denoiser;
 
     // 降噪器缓冲
-    CUdeviceptr m_d_state;
-    CUdeviceptr m_d_scratch;
-    CUdeviceptr m_d_intensity;
-    size_t m_stateSize;
-    size_t m_scratchSize;
+    DenoiserBuffers m_buffers;
 
     // 分块降噪临时缓冲
-    CUdeviceptr m_d_tileBuffer;
-    CUdeviceptr m_d_tileInputBuffer;
-    CUdeviceptr m_d_tileAlbedoBuffer;
-    CUdeviceptr m_d_tileNormalBuffer;
+    DenoiserTileBuffers m_tileBuffers;
 
     // 降噪器参数
-    uint32_t m_width;
-    uint32_t m_height;
-    bool m_useAlbedo;
-    bool m_useNormal;
-    bool m_setup;
+    DenoiserParamsInternal m_params;
 
     // 内部方法
     void allocateBuffers();

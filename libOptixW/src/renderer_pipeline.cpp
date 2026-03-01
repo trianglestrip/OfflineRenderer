@@ -69,7 +69,7 @@ void Impl::createPipeline() {
         1,
         &pgOptions,
         log, &logSize,
-        &raygenPG
+        &programGroups.raygenPG
     ));
     
     // Miss
@@ -85,7 +85,7 @@ void Impl::createPipeline() {
         1,
         &pgOptions,
         log, &logSize,
-        &missPG
+        &programGroups.missPG
     ));
     
     // Hitgroup
@@ -101,11 +101,11 @@ void Impl::createPipeline() {
         1,
         &pgOptions,
         log, &logSize,
-        &hitgroupPG
+        &programGroups.hitgroupPG
     ));
     
     // Link pipeline
-    OptixProgramGroup programGroups[] = { raygenPG, missPG, hitgroupPG };
+    OptixProgramGroup programGroupsArray[] = { programGroups.raygenPG, programGroups.missPG, programGroups.hitgroupPG };
     
     OptixPipelineLinkOptions pipelineLinkOptions = {};
     pipelineLinkOptions.maxTraceDepth = 1;
@@ -115,7 +115,7 @@ void Impl::createPipeline() {
         g_optixContext,
         &pipelineCompileOptions,
         &pipelineLinkOptions,
-        programGroups,
+        programGroupsArray,
         3,
         log, &logSize,
         &pipeline
@@ -135,21 +135,21 @@ void Impl::createPipeline() {
 
 void Impl::createWavefrontKernels() {
     const std::string shadeCubin = findCubinPath("shade.cubin").string();
-    CU_CHECK(cuModuleLoad(&shadeModule, shadeCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&shadeKernel, shadeModule, "shade"));
+    CU_CHECK(cuModuleLoad(&kernelModules.shadeModule, shadeCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&kernelFunctions.shadeKernel, kernelModules.shadeModule, "shade"));
 
     const std::string compactCubin = findCubinPath("compact.cubin").string();
-    CU_CHECK(cuModuleLoad(&compactModule, compactCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&compactKernel, compactModule, "compact"));
+    CU_CHECK(cuModuleLoad(&kernelModules.compactModule, compactCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&kernelFunctions.compactKernel, kernelModules.compactModule, "compact"));
 
     const std::string scaleCubin = findCubinPath("scale.cubin").string();
-    CU_CHECK(cuModuleLoad(&scaleModule, scaleCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&scaleKernel, scaleModule, "scale_to_float4"));
+    CU_CHECK(cuModuleLoad(&kernelModules.scaleModule, scaleCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&kernelFunctions.scaleKernel, kernelModules.scaleModule, "scale_to_float4"));
 
     const std::string mergeCubin = findCubinPath("denoise_merge.cubin").string();
-    CU_CHECK(cuModuleLoad(&mergeModule, mergeCubin.c_str()));
-    CU_CHECK(cuModuleGetFunction(&mergeKernel, mergeModule, "merge_tile"));
-    CU_CHECK(cuModuleGetFunction(&normalizeKernel, mergeModule, "normalize_accum"));
+    CU_CHECK(cuModuleLoad(&kernelModules.mergeModule, mergeCubin.c_str()));
+    CU_CHECK(cuModuleGetFunction(&kernelFunctions.mergeKernel, kernelModules.mergeModule, "merge_tile"));
+    CU_CHECK(cuModuleGetFunction(&kernelFunctions.normalizeKernel, kernelModules.mergeModule, "normalize_accum"));
 
     std::cout << "[Renderer] Wavefront kernels loaded" << std::endl;
 }
@@ -160,30 +160,32 @@ void Impl::buildSBT() {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     RaygenRecord raygenRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG, &raygenRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(programGroups.raygenPG, &raygenRecord));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.raygenRecord), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbtRecords.raygenRecord), sizeof(RaygenRecord)));
     CUDA_CHECK(cudaMemcpy(
-        (void*)sbt.raygenRecord,
+        (void*)sbtRecords.raygenRecord,
         &raygenRecord,
         sizeof(RaygenRecord),
         cudaMemcpyHostToDevice
     ));
+    sbt.raygenRecord = sbtRecords.raygenRecord;
     
     // Miss record
     struct MissRecord {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     MissRecord missRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(missPG, &missRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(programGroups.missPG, &missRecord));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.missRecordBase), sizeof(MissRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbtRecords.missRecord), sizeof(MissRecord)));
     CUDA_CHECK(cudaMemcpy(
-        (void*)sbt.missRecordBase,
+        (void*)sbtRecords.missRecord,
         &missRecord,
         sizeof(MissRecord),
         cudaMemcpyHostToDevice
     ));
+    sbt.missRecordBase = sbtRecords.missRecord;
     sbt.missRecordStrideInBytes = sizeof(MissRecord);
     sbt.missRecordCount = 1;
     
@@ -192,15 +194,16 @@ void Impl::buildSBT() {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     HitgroupRecord hitgroupRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(hitgroupPG, &hitgroupRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(programGroups.hitgroupPG, &hitgroupRecord));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbt.hitgroupRecordBase), sizeof(HitgroupRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&sbtRecords.hitgroupRecord), sizeof(HitgroupRecord)));
     CUDA_CHECK(cudaMemcpy(
-        (void*)sbt.hitgroupRecordBase,
+        (void*)sbtRecords.hitgroupRecord,
         &hitgroupRecord,
         sizeof(HitgroupRecord),
         cudaMemcpyHostToDevice
     ));
+    sbt.hitgroupRecordBase = sbtRecords.hitgroupRecord;
     sbt.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
     sbt.hitgroupRecordCount = 1;
     

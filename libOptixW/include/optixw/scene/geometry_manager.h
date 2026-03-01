@@ -6,6 +6,7 @@
 #include <cuda.h>
 #include <vector>
 #include <cstdint>
+#include <optixw/types.h>
 
 namespace optixw {
 

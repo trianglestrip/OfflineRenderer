@@ -11,12 +11,8 @@ Pipeline::Pipeline(OptixDeviceContext context)
     : m_context(context)
     , m_pipeline(nullptr)
     , m_traceModule(nullptr)
-    , m_raygenPG(nullptr)
-    , m_missPG(nullptr)
-    , m_hitgroupPG(nullptr)
-    , m_sbtRaygenRecord(0)
-    , m_sbtMissRecord(0)
-    , m_sbtHitgroupRecord(0)
+    , m_programGroups({nullptr, nullptr, nullptr})
+    , m_sbtRecords({0, 0, 0})
     , m_created(false)
 {
     memset(&m_sbt, 0, sizeof(m_sbt));
@@ -47,23 +43,23 @@ void Pipeline::destroy() {
     if (!m_created) return;
 
     // 销毁 SBT 缓冲
-    if (m_sbtRaygenRecord) {
-        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtRaygenRecord)));
-        m_sbtRaygenRecord = 0;
+    if (m_sbtRecords.raygenRecord) {
+        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtRecords.raygenRecord)));
+        m_sbtRecords.raygenRecord = 0;
     }
-    if (m_sbtMissRecord) {
-        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtMissRecord)));
-        m_sbtMissRecord = 0;
+    if (m_sbtRecords.missRecord) {
+        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtRecords.missRecord)));
+        m_sbtRecords.missRecord = 0;
     }
-    if (m_sbtHitgroupRecord) {
-        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtHitgroupRecord)));
-        m_sbtHitgroupRecord = 0;
+    if (m_sbtRecords.hitgroupRecord) {
+        CUDA_CHECK(cudaFree(reinterpret_cast<void*>(m_sbtRecords.hitgroupRecord)));
+        m_sbtRecords.hitgroupRecord = 0;
     }
 
     // 销毁程序组
-    if (m_raygenPG) OPTIX_CHECK(optixProgramGroupDestroy(m_raygenPG));
-    if (m_missPG) OPTIX_CHECK(optixProgramGroupDestroy(m_missPG));
-    if (m_hitgroupPG) OPTIX_CHECK(optixProgramGroupDestroy(m_hitgroupPG));
+    if (m_programGroups.raygenPG) OPTIX_CHECK(optixProgramGroupDestroy(m_programGroups.raygenPG));
+    if (m_programGroups.missPG) OPTIX_CHECK(optixProgramGroupDestroy(m_programGroups.missPG));
+    if (m_programGroups.hitgroupPG) OPTIX_CHECK(optixProgramGroupDestroy(m_programGroups.hitgroupPG));
 
     // 销毁管线和模块
     if (m_pipeline) OPTIX_CHECK(optixPipelineDestroy(m_pipeline));
@@ -147,7 +143,7 @@ void Pipeline::createProgramGroups() {
         1,
         &pgOptions,
         log, &logSize,
-        &m_raygenPG
+        &m_programGroups.raygenPG
     ));
 
     // Miss 程序组
@@ -163,7 +159,7 @@ void Pipeline::createProgramGroups() {
         1,
         &pgOptions,
         log, &logSize,
-        &m_missPG
+        &m_programGroups.missPG
     ));
 
     // Hitgroup 程序组
@@ -179,13 +175,13 @@ void Pipeline::createProgramGroups() {
         1,
         &pgOptions,
         log, &logSize,
-        &m_hitgroupPG
+        &m_programGroups.hitgroupPG
     ));
 }
 
 void Pipeline::linkPipeline() {
     // 链接管线
-    OptixProgramGroup programGroups[] = { m_raygenPG, m_missPG, m_hitgroupPG };
+    OptixProgramGroup programGroups[] = { m_programGroups.raygenPG, m_programGroups.missPG, m_programGroups.hitgroupPG };
 
     OptixPipelineLinkOptions pipelineLinkOptions = {};
     pipelineLinkOptions.maxTraceDepth = 1;
@@ -214,34 +210,34 @@ void Pipeline::buildSBT() {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     RaygenRecord raygenRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(m_raygenPG, &raygenRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(m_programGroups.raygenPG, &raygenRecord));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRaygenRecord), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRecords.raygenRecord), sizeof(RaygenRecord)));
     CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(m_sbtRaygenRecord),
+        reinterpret_cast<void*>(m_sbtRecords.raygenRecord),
         &raygenRecord,
         sizeof(RaygenRecord),
         cudaMemcpyHostToDevice
     ));
 
-    m_sbt.raygenRecord = m_sbtRaygenRecord;
+    m_sbt.raygenRecord = m_sbtRecords.raygenRecord;
 
     // Miss record
     struct MissRecord {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     MissRecord missRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(m_missPG, &missRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(m_programGroups.missPG, &missRecord));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissRecord), sizeof(MissRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRecords.missRecord), sizeof(MissRecord)));
     CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(m_sbtMissRecord),
+        reinterpret_cast<void*>(m_sbtRecords.missRecord),
         &missRecord,
         sizeof(MissRecord),
         cudaMemcpyHostToDevice
     ));
 
-    m_sbt.missRecordBase = m_sbtMissRecord;
+    m_sbt.missRecordBase = m_sbtRecords.missRecord;
     m_sbt.missRecordStrideInBytes = sizeof(MissRecord);
     m_sbt.missRecordCount = 1;
 
@@ -250,17 +246,17 @@ void Pipeline::buildSBT() {
         __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
     HitgroupRecord hitgroupRecord;
-    OPTIX_CHECK(optixSbtRecordPackHeader(m_hitgroupPG, &hitgroupRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(m_programGroups.hitgroupPG, &hitgroupRecord));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtHitgroupRecord), sizeof(HitgroupRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRecords.hitgroupRecord), sizeof(HitgroupRecord)));
     CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(m_sbtHitgroupRecord),
+        reinterpret_cast<void*>(m_sbtRecords.hitgroupRecord),
         &hitgroupRecord,
         sizeof(HitgroupRecord),
         cudaMemcpyHostToDevice
     ));
 
-    m_sbt.hitgroupRecordBase = m_sbtHitgroupRecord;
+    m_sbt.hitgroupRecordBase = m_sbtRecords.hitgroupRecord;
     m_sbt.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
     m_sbt.hitgroupRecordCount = 1;
 

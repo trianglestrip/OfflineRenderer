@@ -5,6 +5,7 @@
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
 #include <cstdint>
+#include <optixw/types.h>
 
 namespace optixw {
 
@@ -48,15 +49,11 @@ private:
     OptixModule m_traceModule;
 
     // 程序组
-    OptixProgramGroup m_raygenPG;
-    OptixProgramGroup m_missPG;
-    OptixProgramGroup m_hitgroupPG;
+    PipelineProgramGroups m_programGroups;
 
     // SBT
     OptixShaderBindingTable m_sbt;
-    CUdeviceptr m_sbtRaygenRecord;
-    CUdeviceptr m_sbtMissRecord;
-    CUdeviceptr m_sbtHitgroupRecord;
+    PipelineSBTRecords m_sbtRecords;
 
     // 创建状态
     bool m_created;

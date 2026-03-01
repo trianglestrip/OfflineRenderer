@@ -3,8 +3,23 @@
 #include <optixw/core/math_types.h>
 #include <cuda_runtime.h>
 #include <optix.h>
+#include <cuda.h>
+
+// Host-only STL includes
+#ifndef __CUDACC__
+#include <vector>
+#include <string>
+#include <variant>
+#include <span>
+#endif
 
 namespace optixw {
+
+// Forward declarations (host-only)
+#ifndef __CUDACC__
+class Scene;
+struct Camera;
+#endif
 
 // Wavefront ray state
 struct RayState {
@@ -194,33 +209,7 @@ struct GlassMaterialParams {
     float ior;
 };
 
-// ==================== 材质参数变体 ====================
-using MaterialParams = std::variant<
-    MatteMaterialParams,
-    UE4MaterialParams,
-    SpecularReflectionParams,
-    SpecularScatteringParams,
-    MicrofacetReflectionParams,
-    MicrofacetScatteringParams,
-    OldStyleMaterialParams,
-    DiffuseEmitterParams,
-    DirectionalEmitterParams,
-    PointEmitterParams,
-    EnvironmentEmitterParams,
-    MetalMaterialParams,
-    GlassMaterialParams
->;
-
-// ==================== 其他参数结构体 ====================
-struct TriangleMeshParams {
-    std::span<const float> vertices;
-    std::span<const float> texcoords;
-    std::span<const uint32_t> indices;
-    uint32_t materialId;
-    
-    TriangleMeshParams() : materialId(0) {}
-};
-
+// ==================== 其他参数结构体（不使用STL的，主机和设备都可用）====================
 struct EnvironmentMapParams {
     const float* pixels;
     uint32_t width;
@@ -285,7 +274,386 @@ struct DenoiserTiledParams {
           tileWidth(0), tileHeight(0), overlap(0), stream(0) {}
 };
 
-// ==================== 纹理加载参数结构体 ====================
+// ==================== 通用管理结构体 ====================
+
+// 波前渲染队列缓冲
+struct WavefrontBuffers {
+    CUdeviceptr d_rayPool = 0;
+    CUdeviceptr d_activeIndices = 0;
+    CUdeviceptr d_compactIndices = 0;
+    CUdeviceptr d_hitBuffer = 0;
+    CUdeviceptr d_compactCounter = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_rayPool) { cudaFree(reinterpret_cast<void*>(d_rayPool)); d_rayPool = 0; }
+        if (d_activeIndices) { cudaFree(reinterpret_cast<void*>(d_activeIndices)); d_activeIndices = 0; }
+        if (d_compactIndices) { cudaFree(reinterpret_cast<void*>(d_compactIndices)); d_compactIndices = 0; }
+        if (d_hitBuffer) { cudaFree(reinterpret_cast<void*>(d_hitBuffer)); d_hitBuffer = 0; }
+        if (d_compactCounter) { cudaFree(reinterpret_cast<void*>(d_compactCounter)); d_compactCounter = 0; }
+    }
+    
+    void allocate(size_t rayPoolSize, size_t indicesSize, size_t hitBufferSize) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&d_rayPool), rayPoolSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_activeIndices), indicesSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_compactIndices), indicesSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_hitBuffer), hitBufferSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_compactCounter), sizeof(uint32_t));
+    }
+#endif
+};
+
+// 渲染累积缓冲
+struct RenderAccumBuffers {
+    CUdeviceptr d_accumBuffer = 0;
+    CUdeviceptr d_albedoBuffer = 0;
+    CUdeviceptr d_normalBuffer = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_accumBuffer) { cudaFree(reinterpret_cast<void*>(d_accumBuffer)); d_accumBuffer = 0; }
+        if (d_albedoBuffer) { cudaFree(reinterpret_cast<void*>(d_albedoBuffer)); d_albedoBuffer = 0; }
+        if (d_normalBuffer) { cudaFree(reinterpret_cast<void*>(d_normalBuffer)); d_normalBuffer = 0; }
+    }
+    
+    void allocate(size_t accumSize) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&d_accumBuffer), accumSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_albedoBuffer), accumSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_normalBuffer), accumSize);
+    }
+#endif
+};
+
+// 分块合并缓冲
+struct MergeBuffers {
+    CUdeviceptr d_mergeAccum = 0;
+    CUdeviceptr d_mergeWeight = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_mergeAccum) { cudaFree(reinterpret_cast<void*>(d_mergeAccum)); d_mergeAccum = 0; }
+        if (d_mergeWeight) { cudaFree(reinterpret_cast<void*>(d_mergeWeight)); d_mergeWeight = 0; }
+    }
+    
+    void allocate(size_t accumSize, size_t weightSize) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&d_mergeAccum), accumSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_mergeWeight), weightSize);
+    }
+#endif
+};
+
+// 材质纹理缓冲
+struct MaterialTextureBuffers {
+    CUdeviceptr d_materials = 0;
+    CUdeviceptr d_texcoords = 0;
+    CUdeviceptr d_textures = 0;
+    uint32_t numMaterials = 0;
+    uint32_t numTextures = 0;
+    uint32_t numTriangles = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        d_materials = 0;
+        d_texcoords = 0;
+        d_textures = 0;
+    }
+#endif
+};
+
+// 环境贴图参数
+struct EnvironmentMap {
+    CUdeviceptr d_map = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    float scale = 1.0f;
+
+#ifndef __CUDACC__
+    void free() {
+        d_map = 0;
+    }
+#endif
+};
+
+// Launch 参数缓冲
+struct LaunchParamsBuffer {
+    CUdeviceptr d_launchParams = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_launchParams) { cudaFree(reinterpret_cast<void*>(d_launchParams)); d_launchParams = 0; }
+    }
+    
+    void allocate(size_t size) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&d_launchParams), size);
+    }
+#endif
+};
+
+// 降噪器缓冲
+struct DenoiserBuffers {
+    CUdeviceptr d_state = 0;
+    CUdeviceptr d_scratch = 0;
+    CUdeviceptr d_intensity = 0;
+    size_t stateSize = 0;
+    size_t scratchSize = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_state) { cudaFree(reinterpret_cast<void*>(d_state)); d_state = 0; }
+        if (d_scratch) { cudaFree(reinterpret_cast<void*>(d_scratch)); d_scratch = 0; }
+        if (d_intensity) { cudaFree(reinterpret_cast<void*>(d_intensity)); d_intensity = 0; }
+    }
+    
+    void allocate(size_t stateSize_, size_t scratchSize_) {
+        free();
+        stateSize = stateSize_;
+        scratchSize = scratchSize_;
+        cudaMalloc(reinterpret_cast<void**>(&d_state), stateSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_scratch), scratchSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_intensity), sizeof(float));
+    }
+#endif
+};
+
+// 降噪器主要图像缓冲
+struct DenoiserImageBuffers {
+    CUdeviceptr d_input = 0;
+    CUdeviceptr d_output = 0;
+    CUdeviceptr d_albedoInput = 0;
+    CUdeviceptr d_normalInput = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (d_input) { cudaFree(reinterpret_cast<void*>(d_input)); d_input = 0; }
+        if (d_output) { cudaFree(reinterpret_cast<void*>(d_output)); d_output = 0; }
+        if (d_albedoInput) { cudaFree(reinterpret_cast<void*>(d_albedoInput)); d_albedoInput = 0; }
+        if (d_normalInput) { cudaFree(reinterpret_cast<void*>(d_normalInput)); d_normalInput = 0; }
+    }
+    
+    void allocate(size_t imageSize) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&d_input), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_output), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_albedoInput), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&d_normalInput), imageSize);
+    }
+#endif
+};
+
+// 分块降噪临时缓冲
+struct DenoiserTileBuffers {
+    CUdeviceptr tileBuffer = 0;
+    CUdeviceptr tileInputBuffer = 0;
+    CUdeviceptr tileAlbedoBuffer = 0;
+    CUdeviceptr tileNormalBuffer = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (tileBuffer) { cudaFree(reinterpret_cast<void*>(tileBuffer)); tileBuffer = 0; }
+        if (tileInputBuffer) { cudaFree(reinterpret_cast<void*>(tileInputBuffer)); tileInputBuffer = 0; }
+        if (tileAlbedoBuffer) { cudaFree(reinterpret_cast<void*>(tileAlbedoBuffer)); tileAlbedoBuffer = 0; }
+        if (tileNormalBuffer) { cudaFree(reinterpret_cast<void*>(tileNormalBuffer)); tileNormalBuffer = 0; }
+    }
+    
+    void allocate(size_t imageSize) {
+        free();
+        cudaMalloc(reinterpret_cast<void**>(&tileBuffer), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&tileInputBuffer), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&tileAlbedoBuffer), imageSize);
+        cudaMalloc(reinterpret_cast<void**>(&tileNormalBuffer), imageSize);
+    }
+#endif
+};
+
+// 降噪器完整状态
+struct DenoiserState {
+    OptixDenoiser handle = nullptr;
+    DenoiserBuffers buffers;
+    DenoiserImageBuffers imageBuffers;
+    DenoiserTileBuffers tileBuffers;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t overlap = 0;
+
+#ifndef __CUDACC__
+    void destroy() {
+        if (handle) {
+            optixDenoiserDestroy(handle);
+            handle = nullptr;
+        }
+        buffers.free();
+        imageBuffers.free();
+        tileBuffers.free();
+        width = 0;
+        height = 0;
+        overlap = 0;
+    }
+#endif
+};
+
+// 降噪器参数（内部）
+struct DenoiserParamsInternal {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool useAlbedo = false;
+    bool useNormal = false;
+    bool setup = false;
+};
+
+// 管线程序组
+struct PipelineProgramGroups {
+    OptixProgramGroup raygenPG = nullptr;
+    OptixProgramGroup missPG = nullptr;
+    OptixProgramGroup hitgroupPG = nullptr;
+
+#ifndef __CUDACC__
+    void destroy(OptixDeviceContext context) {
+        if (raygenPG) { optixProgramGroupDestroy(raygenPG); raygenPG = nullptr; }
+        if (missPG) { optixProgramGroupDestroy(missPG); missPG = nullptr; }
+        if (hitgroupPG) { optixProgramGroupDestroy(hitgroupPG); hitgroupPG = nullptr; }
+    }
+#endif
+};
+
+// 管线 SBT 记录
+struct PipelineSBTRecords {
+    CUdeviceptr raygenRecord = 0;
+    CUdeviceptr missRecord = 0;
+    CUdeviceptr hitgroupRecord = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        if (raygenRecord) { cudaFree(reinterpret_cast<void*>(raygenRecord)); raygenRecord = 0; }
+        if (missRecord) { cudaFree(reinterpret_cast<void*>(missRecord)); missRecord = 0; }
+        if (hitgroupRecord) { cudaFree(reinterpret_cast<void*>(hitgroupRecord)); hitgroupRecord = 0; }
+    }
+#endif
+};
+
+// 核模块
+struct KernelModules {
+    CUmodule shadeModule = nullptr;
+    CUmodule compactModule = nullptr;
+    CUmodule scaleModule = nullptr;
+    CUmodule mergeModule = nullptr;
+
+#ifndef __CUDACC__
+    void unload() {
+        if (shadeModule) { cuModuleUnload(shadeModule); shadeModule = nullptr; }
+        if (compactModule) { cuModuleUnload(compactModule); compactModule = nullptr; }
+        if (scaleModule) { cuModuleUnload(scaleModule); scaleModule = nullptr; }
+        if (mergeModule) { cuModuleUnload(mergeModule); mergeModule = nullptr; }
+    }
+#endif
+};
+
+// 核函数
+struct KernelFunctions {
+    CUfunction shadeKernel = nullptr;
+    CUfunction compactKernel = nullptr;
+    CUfunction scaleKernel = nullptr;
+    CUfunction mergeKernel = nullptr;
+    CUfunction normalizeKernel = nullptr;
+};
+
+// ==================== 主机端资源管理辅助（仅主机端可用）====================
+#ifndef __CUDACC__
+
+// 用于管理 CUDA 设备指针的 RAII 包装器
+struct DevicePtrWrapper {
+    CUdeviceptr ptr = 0;
+    
+    DevicePtrWrapper() = default;
+    explicit DevicePtrWrapper(CUdeviceptr p) : ptr(p) {}
+    
+    // 自动转换为 CUdeviceptr
+    operator CUdeviceptr() const { return ptr; }
+    
+    // 辅助方法
+    bool valid() const { return ptr != 0; }
+    
+    // 分配内存
+    bool allocate(size_t size) {
+        if (ptr != 0) free();
+        return cudaMalloc(reinterpret_cast<void**>(&ptr), size) == cudaSuccess;
+    }
+    
+    // 释放内存
+    void free() {
+        if (ptr != 0) {
+            cudaFree(reinterpret_cast<void*>(ptr));
+            ptr = 0;
+        }
+    }
+    
+    ~DevicePtrWrapper() {
+        free();
+    }
+    
+    // 禁止拷贝，允许移动
+    DevicePtrWrapper(const DevicePtrWrapper&) = delete;
+    DevicePtrWrapper& operator=(const DevicePtrWrapper&) = delete;
+    DevicePtrWrapper(DevicePtrWrapper&& other) noexcept : ptr(other.ptr) {
+        other.ptr = 0;
+    }
+    DevicePtrWrapper& operator=(DevicePtrWrapper&& other) noexcept {
+        if (this != &other) {
+            free();
+            ptr = other.ptr;
+            other.ptr = 0;
+        }
+        return *this;
+    }
+};
+
+#endif // __CUDACC__
+
+// ==================== 材质参数变体（仅主机端）====================
+#ifndef __CUDACC__
+using MaterialParams = std::variant<
+    MatteMaterialParams,
+    UE4MaterialParams,
+    SpecularReflectionParams,
+    SpecularScatteringParams,
+    MicrofacetReflectionParams,
+    MicrofacetScatteringParams,
+    OldStyleMaterialParams,
+    DiffuseEmitterParams,
+    DirectionalEmitterParams,
+    PointEmitterParams,
+    EnvironmentEmitterParams,
+    MetalMaterialParams,
+    GlassMaterialParams
+>;
+
+// ==================== 其他参数结构体（仅主机端，使用STL）====================
+struct TriangleMeshParams {
+    std::span<const float> vertices;
+    std::span<const float> texcoords;
+    std::span<const uint32_t> indices;
+    uint32_t materialId;
+    
+    TriangleMeshParams() : materialId(0) {}
+};
+
+struct RenderParams {
+    Scene* scene;
+    const Camera* camera;
+    Vec3* outputBuffer;
+    uint32_t width;
+    uint32_t height;
+    RenderConfig config;
+    
+    RenderParams()
+        : scene(nullptr), camera(nullptr), outputBuffer(nullptr),
+          width(0), height(0), config() {}
+};
+
+// ==================== 纹理加载参数结构体（仅主机端，使用STL）====================
 struct TextureLoadSingleParams {
     std::string path;
     bool decodeSRGB = true;
@@ -301,5 +669,6 @@ struct TextureLoadBatchParams {
     
     TextureLoadBatchParams() : decodeSRGB(true) {}
 };
+#endif
 
 } // namespace optixw

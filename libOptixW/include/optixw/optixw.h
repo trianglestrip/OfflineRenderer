@@ -168,6 +168,8 @@ public:
         uint32_t height,
         const RenderConfig& config);
     
+    void render(const RenderParams& params);
+    
 private:
     std::unique_ptr<Impl> m_impl;
 };

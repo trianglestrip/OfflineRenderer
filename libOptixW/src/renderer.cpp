@@ -108,52 +108,26 @@ std::vector<char> loadPTX(const char* filename) {
 // in this translation unit.
 
 Impl::Impl()
-    : traceModule(nullptr), pipeline(nullptr), raygenPG(nullptr), missPG(nullptr), hitgroupPG(nullptr), sbt(),
-      d_rayPool(0), d_activeIndices(0), d_compactIndices(0), d_accumBuffer(0), d_albedoBuffer(0), d_normalBuffer(0),
-      d_hitBuffer(0), d_compactCounter(0), d_materials(0), d_texcoords(0), d_textures(0),
-      d_launchParams(0), shadeModule(nullptr), compactModule(nullptr), shadeKernel(nullptr), compactKernel(nullptr),
-      scaleModule(nullptr), scaleKernel(nullptr), denoiser(nullptr), d_denoiserState(0), d_denoiserScratch(0),
-      d_denoiserInput(0), d_denoiserOutput(0), d_tileBuffer(0), d_tileInputBuffer(0), d_tileAlbedoInput(0),
-      d_tileNormalInput(0), d_denoiserIntensity(0), d_denoiserAlbedoInput(0), d_denoiserNormalInput(0),
-            d_mergeAccum(0), d_mergeWeight(0),
-      denoiserStateSize(0), denoiserScratchSize(0), denoiserWidth(0), denoiserHeight(0), denoiserOverlap(0),
-      numPixels(0), maxRays(0), numMaterials(0), numTextures(0), numTriangles(0), environmentRadiance(make_float3(0.0f,0.0f,0.0f)),
-      d_environmentMap(0), environmentMapWidth(0), environmentMapHeight(0), environmentMapScale(1.0f), pipelineCreated(false),
+    : traceModule(nullptr), pipeline(nullptr), sbt(),
+      numPixels(0), maxRays(0), environmentRadiance(make_float3(0.0f,0.0f,0.0f)),
+      pipelineCreated(false),
       scheduler(nullptr)
 {
 }
 
 Impl::~Impl() {
-    if (raygenPG) optixProgramGroupDestroy(raygenPG);
-    if (missPG) optixProgramGroupDestroy(missPG);
-    if (hitgroupPG) optixProgramGroupDestroy(hitgroupPG);
+    programGroups.destroy(g_optixContext);
     if (pipeline) optixPipelineDestroy(pipeline);
     if (traceModule) optixModuleDestroy(traceModule);
-    if (shadeModule) cuModuleUnload(shadeModule);
-    if (compactModule) cuModuleUnload(compactModule);
-    if (scaleModule) cuModuleUnload(scaleModule);
-    if (denoiser) optixDenoiserDestroy(denoiser);
+    kernelModules.unload();
     
-    if (sbt.raygenRecord) cudaFree((void*)sbt.raygenRecord);
-    if (sbt.missRecordBase) cudaFree((void*)sbt.missRecordBase);
-    if (sbt.hitgroupRecordBase) cudaFree((void*)sbt.hitgroupRecordBase);
+    sbtRecords.free();
     
-    if (d_rayPool) cudaFree((void*)d_rayPool);
-    if (d_activeIndices) cudaFree((void*)d_activeIndices);
-    if (d_compactIndices) cudaFree((void*)d_compactIndices);
-    if (d_accumBuffer) cudaFree((void*)d_accumBuffer);
-    if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
-    if (d_compactCounter) cudaFree((void*)d_compactCounter);
-    if (d_launchParams) cudaFree((void*)d_launchParams);
-    if (d_mergeAccum) cudaFree((void*)d_mergeAccum);
-    if (d_mergeWeight) cudaFree((void*)d_mergeWeight);
-    if (d_denoiserState) cudaFree((void*)d_denoiserState);
-    if (d_denoiserScratch) cudaFree((void*)d_denoiserScratch);
-    if (d_denoiserInput) cudaFree((void*)d_denoiserInput);
-    if (d_denoiserOutput) cudaFree((void*)d_denoiserOutput);
-    if (d_denoiserAlbedoInput) cudaFree((void*)d_denoiserAlbedoInput);
-    if (d_denoiserNormalInput) cudaFree((void*)d_denoiserNormalInput);
-    if (d_denoiserIntensity) cudaFree((void*)d_denoiserIntensity);
+    wavefrontBuffers.free();
+    accumBuffers.free();
+    mergeBuffers.free();
+    launchParamsBuffer.free();
+    denoiser.destroy();
 }
 
 void Impl::allocateBuffers(uint32_t width, uint32_t height) {
@@ -164,49 +138,36 @@ void Impl::allocateBuffers(uint32_t width, uint32_t height) {
     size_t indicesSize = maxRays * sizeof(uint32_t);
     size_t accumSize = numPixels * sizeof(float3);
     size_t hitBufferSize = maxRays * sizeof(HitInfo);
-    
-    if (d_rayPool) cudaFree((void*)d_rayPool);
-    if (d_activeIndices) cudaFree((void*)d_activeIndices);
-    if (d_compactIndices) cudaFree((void*)d_compactIndices);
-    if (d_accumBuffer) cudaFree((void*)d_accumBuffer);
-    if (d_albedoBuffer) cudaFree((void*)d_albedoBuffer);
-    if (d_normalBuffer) cudaFree((void*)d_normalBuffer);
-    if (d_hitBuffer) cudaFree((void*)d_hitBuffer);
-    if (d_compactCounter) cudaFree((void*)d_compactCounter);
-    if (d_launchParams) cudaFree((void*)d_launchParams);
+    size_t weightSize = numPixels * sizeof(float);
     
     std::cout << "[Renderer] allocateBuffers: malloc rayPool " << rayPoolSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rayPool), rayPoolSize));
     std::cout << "[Renderer] allocateBuffers: malloc activeIndices " << indicesSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_activeIndices), indicesSize));
     std::cout << "[Renderer] allocateBuffers: malloc compactIndices " << indicesSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_compactIndices), indicesSize));
+    wavefrontBuffers.allocate(rayPoolSize, indicesSize, hitBufferSize);
+    
     std::cout << "[Renderer] allocateBuffers: malloc accumBuffer " << accumSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_accumBuffer), accumSize));
     std::cout << "[Renderer] allocateBuffers: malloc albedoBuffer " << accumSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_albedoBuffer), accumSize));
     std::cout << "[Renderer] allocateBuffers: malloc normalBuffer " << accumSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_normalBuffer), accumSize));
+    accumBuffers.allocate(accumSize);
+    
     std::cout << "[Renderer] allocateBuffers: malloc mergeAccum " << accumSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_mergeAccum), accumSize));
-    std::cout << "[Renderer] allocateBuffers: malloc mergeWeight " << (numPixels * sizeof(float)) << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_mergeWeight), numPixels * sizeof(float)));
+    std::cout << "[Renderer] allocateBuffers: malloc mergeWeight " << weightSize << std::endl;
+    mergeBuffers.allocate(accumSize, weightSize);
+    
     std::cout << "[Renderer] allocateBuffers: malloc hitBuffer " << hitBufferSize << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hitBuffer), hitBufferSize));
     std::cout << "[Renderer] allocateBuffers: malloc compactCounter" << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_compactCounter), sizeof(uint32_t)));
     std::cout << "[Renderer] allocateBuffers: malloc launchParams" << std::endl;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_launchParams), sizeof(LaunchParams)));
+    launchParamsBuffer.allocate(sizeof(LaunchParams));
     
     // Initialize buffers to deterministic values
-    CUDA_CHECK(cudaMemset((void*)d_rayPool, 0, rayPoolSize));
-    CUDA_CHECK(cudaMemset((void*)d_hitBuffer, 0, hitBufferSize));
-    CUDA_CHECK(cudaMemset((void*)d_accumBuffer, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)d_albedoBuffer, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)d_normalBuffer, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)d_mergeAccum, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)d_mergeWeight, 0, numPixels * sizeof(float)));
-    CUDA_CHECK(cudaMemset((void*)d_compactCounter, 0, sizeof(uint32_t)));
+    CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_rayPool, 0, rayPoolSize));
+    CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_hitBuffer, 0, hitBufferSize));
+    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_accumBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_albedoBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_normalBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)mergeBuffers.d_mergeAccum, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)mergeBuffers.d_mergeWeight, 0, weightSize));
+    CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_compactCounter, 0, sizeof(uint32_t)));
     
     std::cout << "[Renderer] Allocated buffers: " 
               << numPixels << " pixels, " 
@@ -215,7 +176,7 @@ void Impl::allocateBuffers(uint32_t width, uint32_t height) {
 
 void Impl::ensureDenoiserBuffers(uint32_t width, uint32_t height,
                                            uint32_t tileWidth, uint32_t tileHeight) {
-    if (!denoiser) {
+    if (!denoiser.handle) {
         OptixDenoiserOptions options = {};
         // enable guides so that we can supply albedo/normal buffers
         options.guideAlbedo = 1;
@@ -225,62 +186,48 @@ void Impl::ensureDenoiserBuffers(uint32_t width, uint32_t height,
             g_optixContext,
             OPTIX_DENOISER_MODEL_KIND_HDR,
             &options,
-            &denoiser
+            &denoiser.handle
         ));
     }
 
-    if (width == denoiserWidth && height == denoiserHeight &&
-        d_denoiserInput && d_denoiserAlbedoInput && d_denoiserNormalInput) {
+    if (width == denoiser.width && height == denoiser.height &&
+        denoiser.imageBuffers.d_input && denoiser.imageBuffers.d_albedoInput && denoiser.imageBuffers.d_normalInput) {
         return;
     }
 
-    if (d_denoiserState) cudaFree((void*)d_denoiserState);
-    if (d_denoiserScratch) cudaFree((void*)d_denoiserScratch);
-    if (d_denoiserInput) cudaFree((void*)d_denoiserInput);
-    if (d_denoiserOutput) cudaFree((void*)d_denoiserOutput);
-    if (d_denoiserAlbedoInput) cudaFree((void*)d_denoiserAlbedoInput);
-    if (d_denoiserNormalInput) cudaFree((void*)d_denoiserNormalInput);
-    if (d_denoiserIntensity) cudaFree((void*)d_denoiserIntensity);
+    denoiser.buffers.free();
+    denoiser.imageBuffers.free();
+    denoiser.tileBuffers.free();
 
     OptixDenoiserSizes sizes = {};
     OPTIX_CHECK(optixDenoiserComputeMemoryResources(
-        denoiser,
+        denoiser.handle,
         width,
         height,
         &sizes
     ));
 
-    denoiserStateSize = sizes.stateSizeInBytes;
-    denoiserScratchSize = sizes.withoutOverlapScratchSizeInBytes;
-    denoiserOverlap = sizes.overlapWindowSizeInPixels;
+    denoiser.overlap = sizes.overlapWindowSizeInPixels;
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserState), denoiserStateSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserScratch), denoiserScratchSize));
+    denoiser.buffers.allocate(sizes.stateSizeInBytes, sizes.withoutOverlapScratchSizeInBytes);
 
     size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserInput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserOutput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tileBuffer), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tileInputBuffer), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tileAlbedoInput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tileNormalInput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserAlbedoInput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserNormalInput), imageSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_denoiserIntensity), sizeof(float)));
+    denoiser.imageBuffers.allocate(imageSize);
+    denoiser.tileBuffers.allocate(imageSize);
 
     OPTIX_CHECK(optixDenoiserSetup(
-        denoiser,
+        denoiser.handle,
         0,
         width,
         height,
-        d_denoiserState,
-        denoiserStateSize,
-        d_denoiserScratch,
-        denoiserScratchSize
+        denoiser.buffers.d_state,
+        denoiser.buffers.stateSize,
+        denoiser.buffers.d_scratch,
+        denoiser.buffers.scratchSize
     ));
 
-    denoiserWidth = width;
-    denoiserHeight = height;
+    denoiser.width = width;
+    denoiser.height = height;
 }
 
 Renderer::Renderer(TaskScheduler* scheduler) : m_impl(std::make_unique<Impl>()) {
@@ -339,18 +286,18 @@ void Renderer::render(
     CUdeviceptr d_texcoords = SceneAccessor::getTexcoordsPtr(scene);
     CUdeviceptr d_indices = SceneAccessor::getIndicesPtr(scene);
     CUdeviceptr d_triangleMaterialIds = SceneAccessor::getTriangleMaterialIdsPtr(scene);
-    m_impl->d_materials = SceneAccessor::getMaterialsPtr(scene);
-    m_impl->d_texcoords = d_texcoords;
-    m_impl->d_textures = SceneAccessor::getTexturesPtr(scene);
-    m_impl->numMaterials = SceneAccessor::getMaterialCount(scene);
-    m_impl->numTextures = SceneAccessor::getTextureCount(scene);
-    m_impl->numTriangles = SceneAccessor::getTriangleCount(scene);
+    m_impl->materialTextureBuffers.d_materials = SceneAccessor::getMaterialsPtr(scene);
+    m_impl->materialTextureBuffers.d_texcoords = d_texcoords;
+    m_impl->materialTextureBuffers.d_textures = SceneAccessor::getTexturesPtr(scene);
+    m_impl->materialTextureBuffers.numMaterials = SceneAccessor::getMaterialCount(scene);
+    m_impl->materialTextureBuffers.numTextures = SceneAccessor::getTextureCount(scene);
+    m_impl->materialTextureBuffers.numTriangles = SceneAccessor::getTriangleCount(scene);
     const Vec3 env = SceneAccessor::getEnvironmentRadiance(scene);
     m_impl->environmentRadiance = toFloat3(env);
-    m_impl->d_environmentMap = SceneAccessor::getEnvironmentMapPtr(scene);
-    m_impl->environmentMapWidth = SceneAccessor::getEnvironmentMapWidth(scene);
-    m_impl->environmentMapHeight = SceneAccessor::getEnvironmentMapHeight(scene);
-    m_impl->environmentMapScale = SceneAccessor::getEnvironmentMapScale(scene);
+    m_impl->environmentMap.d_map = SceneAccessor::getEnvironmentMapPtr(scene);
+    m_impl->environmentMap.width = SceneAccessor::getEnvironmentMapWidth(scene);
+    m_impl->environmentMap.height = SceneAccessor::getEnvironmentMapHeight(scene);
+    m_impl->environmentMap.scale = SceneAccessor::getEnvironmentMapScale(scene);
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     
@@ -419,7 +366,7 @@ void Renderer::render(
         uint32_t tileW = (!enableTiling || tileWidth == 0) ? width : tileWidth;
         uint32_t tileH = (!enableTiling || tileHeight == 0) ? height : tileHeight;
         m_impl->ensureDenoiserBuffers(width, height, tileW, tileH);
-        std::cout << "[Renderer] denoiser overlap = " << m_impl->denoiserOverlap << "\n";
+        std::cout << "[Renderer] denoiser overlap = " << m_impl->denoiser.overlap << "\n";
         if ((tileW < width || tileH < height)) {
             // disable tiling if the tile is too small relative to the denoiser
             // overlap.  the overlap window is the radius around each pixel that
@@ -428,10 +375,10 @@ void Renderer::render(
             // context.  when tile dimension <= 2*overlap, the non-overlapping
             // output region would be zero or the seams can diverge, so fall back
             // to single-task rendering.
-            uint32_t minSize = m_impl->denoiserOverlap * 2;
+            uint32_t minSize = m_impl->denoiser.overlap * 2;
             if (tileW <= minSize || tileH <= minSize) {
                 std::cout << "[Renderer] requested tile (" << tileW << "x" << tileH
-                          << ") is too small for overlap (" << m_impl->denoiserOverlap
+                          << ") is too small for overlap (" << m_impl->denoiser.overlap
                           << "); disabling tiling\n";
                 tileW = width;
                 tileH = height;
@@ -441,20 +388,20 @@ void Renderer::render(
         // prepare beauty/albedo/normal arrays in float4 space (full image)
         const uint32_t count = m_impl->numPixels;
         const float invSpp = 1.0f / spp;
-        const float3* d_accum = reinterpret_cast<const float3*>(m_impl->d_accumBuffer);
-        float4* d_input = reinterpret_cast<float4*>(m_impl->d_denoiserInput);
+        const float3* d_accum = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_accumBuffer);
+        float4* d_input = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_input);
         void* scaleArgs[] = { &d_accum, &d_input, (void*)&count, (void*)&invSpp };
 
         // zero-out the output buffer to avoid partial-coverage artifacts when
         // copying tiles later.  this prevents the "cross" of black pixels seen
         // when some pixels are never written.
         size_t imageSize = static_cast<size_t>(width) * height * sizeof(float4);
-        CUDA_CHECK(cudaMemset((void*)m_impl->d_denoiserOutput, 0, imageSize));
+        CUDA_CHECK(cudaMemset((void*)m_impl->denoiser.imageBuffers.d_output, 0, imageSize));
 
         const uint32_t blockSize = 256;
         const uint32_t numBlocks = (count + blockSize - 1) / blockSize;
         CU_CHECK(cuLaunchKernel(
-            m_impl->scaleKernel,
+            m_impl->kernelFunctions.scaleKernel,
             numBlocks, 1, 1,
             blockSize, 1, 1,
             0,
@@ -464,16 +411,16 @@ void Renderer::render(
         ));
 
         // also guide buffers
-        const float3* d_albedo = reinterpret_cast<const float3*>(m_impl->d_albedoBuffer);
-        const float3* d_normal = reinterpret_cast<const float3*>(m_impl->d_normalBuffer);
-        float4* d_albedoInput = reinterpret_cast<float4*>(m_impl->d_denoiserAlbedoInput);
-        float4* d_normalInput = reinterpret_cast<float4*>(m_impl->d_denoiserNormalInput);
+        const float3* d_albedo = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_albedoBuffer);
+        const float3* d_normal = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_normalBuffer);
+        float4* d_albedoInput = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_albedoInput);
+        float4* d_normalInput = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_normalInput);
         const float invOne = 1.0f;
 
         void* scaleAlbedoArgs[] = { &d_albedo, &d_albedoInput, (void*)&count, (void*)&invOne };
         void* scaleNormalArgs[] = { &d_normal, &d_normalInput, (void*)&count, (void*)&invOne };
         CU_CHECK(cuLaunchKernel(
-            m_impl->scaleKernel,
+            m_impl->kernelFunctions.scaleKernel,
             numBlocks, 1, 1,
             blockSize, 1, 1,
             0,
@@ -482,7 +429,7 @@ void Renderer::render(
             nullptr
         ));
         CU_CHECK(cuLaunchKernel(
-            m_impl->scaleKernel,
+            m_impl->kernelFunctions.scaleKernel,
             numBlocks, 1, 1,
             blockSize, 1, 1,
             0,
@@ -509,16 +456,16 @@ void Renderer::render(
         // a per-tile intensity causes inconsistent normalization across
         // tiles and produces visible seams.
         OptixImage2D fullInput = baseInput;
-        fullInput.data = m_impl->d_denoiserInput;
+        fullInput.data = m_impl->denoiser.imageBuffers.d_input;
         fullInput.width = width;
         fullInput.height = height;
         OPTIX_CHECK(optixDenoiserComputeIntensity(
-            m_impl->denoiser,
+            m_impl->denoiser.handle,
             0,
             &fullInput,
-            m_impl->d_denoiserIntensity,
-            m_impl->d_denoiserScratch,
-            m_impl->denoiserScratchSize
+            m_impl->denoiser.buffers.d_intensity,
+            m_impl->denoiser.buffers.d_scratch,
+            m_impl->denoiser.buffers.scratchSize
         ));
 
         // compute tile tasks (input region may include overlap, output region
@@ -526,7 +473,7 @@ void Renderer::render(
         // width/height so later the baseInput can be sized correctly per task.
         struct Task { uint32_t inX,inY,inW,inH; uint32_t outX,outY,outW,outH; };
         std::vector<Task> tasks;
-        uint32_t ov = m_impl->denoiserOverlap;
+        uint32_t ov = m_impl->denoiser.overlap;
 
         if (tileW < width || tileH < height) {
             // adjust overlap per-dimension so that it never exceeds half the
@@ -639,7 +586,7 @@ void Renderer::render(
         // capture "before-copy" values from the full-image contiguous input
         for (auto &p : diagPoints) {
             float4 tmp = {};
-            void* src = (void*)(m_impl->d_denoiserInput + (p.gy * width + p.gx) * sizeof(float4));
+            void* src = (void*)(m_impl->denoiser.imageBuffers.d_input + (p.gy * width + p.gx) * sizeof(float4));
             CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
             p.beforeCopy = tmp;
         }
@@ -650,22 +597,22 @@ void Renderer::render(
             // the full-image buffer) into a contiguous temporary buffer so the
             // denoiser can process it correctly
             for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                void* srcRow = (void*)(m_impl->d_denoiserInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                void* dstRow = (void*)(m_impl->d_tileInputBuffer + ty * t.inW * sizeof(float4));
+                void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_input + ((t.inY + ty) * width + t.inX) * sizeof(float4));
+                void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileInputBuffer + ty * t.inW * sizeof(float4));
                 CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
             }
             // do the same for guidance buffers into their dedicated tile buffers
-            if (m_impl->d_denoiserAlbedoInput) {
+            if (m_impl->denoiser.imageBuffers.d_albedoInput) {
                 for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                    void* srcRow = (void*)(m_impl->d_denoiserAlbedoInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                    void* dstRow = (void*)(m_impl->d_tileAlbedoInput + ty * t.inW * sizeof(float4));
+                    void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_albedoInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
+                    void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileAlbedoBuffer + ty * t.inW * sizeof(float4));
                     CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
                 }
             }
-            if (m_impl->d_denoiserNormalInput) {
+            if (m_impl->denoiser.imageBuffers.d_normalInput) {
                 for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                    void* srcRow = (void*)(m_impl->d_denoiserNormalInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                    void* dstRow = (void*)(m_impl->d_tileNormalInput + ty * t.inW * sizeof(float4));
+                    void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_normalInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
+                    void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileNormalBuffer + ty * t.inW * sizeof(float4));
                     CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
                 }
             }
@@ -677,14 +624,14 @@ void Renderer::render(
                 float4 tmp = {};
                 uint32_t localX = p.gx - t.inX;
                 uint32_t localY = p.gy - t.inY;
-                void* src = (void*)(m_impl->d_tileInputBuffer + (localY * t.inW + localX) * sizeof(float4));
+                void* src = (void*)(m_impl->denoiser.tileBuffers.tileInputBuffer + (localY * t.inW + localX) * sizeof(float4));
                 CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
                 p.afterCopyToTile = tmp;
             }
 
             // update baseInput to point to the temporary tile input buffer (now
             // contiguous with correct dimensions)
-            baseInput.data = m_impl->d_tileInputBuffer;
+            baseInput.data = m_impl->denoiser.tileBuffers.tileInputBuffer;
             baseInput.width = t.inW;
             baseInput.height = t.inH;
             baseInput.rowStrideInBytes = t.inW * sizeof(float4); // contiguous
@@ -692,7 +639,7 @@ void Renderer::render(
             // configure output to temporary tile buffer sized to the input
             // region; we'll copy the valid subset into the final image later.
             OptixImage2D output = {};
-            output.data = m_impl->d_tileBuffer;
+            output.data = m_impl->denoiser.tileBuffers.tileBuffer;
             output.width = t.inW;
             output.height = t.inH;
             output.rowStrideInBytes = t.inW * sizeof(float4);
@@ -713,15 +660,15 @@ void Renderer::render(
             guide.albedo.pixelStrideInBytes = 0;
             guide.albedo.format = OPTIX_PIXEL_FORMAT_FLOAT4;
             guide.normal = guide.albedo;
-            if (m_impl->d_denoiserAlbedoInput) {
-                guide.albedo.data = m_impl->d_tileAlbedoInput;
+            if (m_impl->denoiser.imageBuffers.d_albedoInput) {
+                guide.albedo.data = m_impl->denoiser.tileBuffers.tileAlbedoBuffer;
                 guide.albedo.width = t.inW;
                 guide.albedo.height = t.inH;
                 guide.albedo.rowStrideInBytes = t.inW * sizeof(float4);
                 guide.albedo.pixelStrideInBytes = sizeof(float4);
             }
-            if (m_impl->d_denoiserNormalInput) {
-                guide.normal.data = m_impl->d_tileNormalInput;
+            if (m_impl->denoiser.imageBuffers.d_normalInput) {
+                guide.normal.data = m_impl->denoiser.tileBuffers.tileNormalBuffer;
                 guide.normal.width = t.inW;
                 guide.normal.height = t.inH;
                 guide.normal.rowStrideInBytes = t.inW * sizeof(float4);
@@ -733,22 +680,22 @@ void Renderer::render(
             params.hdrAverageColor = 0;
             params.blendFactor = denoiserBlend;
             // Use the precomputed full-image intensity to keep tiles consistent
-            params.hdrIntensity = m_impl->d_denoiserIntensity;
+            params.hdrIntensity = m_impl->denoiser.buffers.d_intensity;
             params.temporalModeUsePreviousLayers = 0;
 
             OPTIX_CHECK(optixDenoiserInvoke(
-                m_impl->denoiser,
+                m_impl->denoiser.handle,
                 0,
                 &params,
-                m_impl->d_denoiserState,
-                m_impl->denoiserStateSize,
+                m_impl->denoiser.buffers.d_state,
+                m_impl->denoiser.buffers.stateSize,
                 &guide,
                 &layer,
                 1,
                 0,
                 0,
-                m_impl->d_denoiserScratch,
-                m_impl->denoiserScratchSize
+                m_impl->denoiser.buffers.d_scratch,
+                m_impl->denoiser.buffers.scratchSize
             ));
 
             // after-denoiser: sample tile output for diagnostic points belonging to this task
@@ -757,7 +704,7 @@ void Renderer::render(
                 float4 tmp = {};
                 uint32_t localX = p.gx - t.inX;
                 uint32_t localY = p.gy - t.inY;
-                void* src = (void*)(m_impl->d_tileBuffer + (localY * t.inW + localX) * sizeof(float4));
+                void* src = (void*)(m_impl->denoiser.tileBuffers.tileBuffer + (localY * t.inW + localX) * sizeof(float4));
                 CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
                 p.afterDenoise = tmp;
             }
@@ -770,10 +717,10 @@ void Renderer::render(
             uint32_t offX = t.outX - t.inX;
             uint32_t offY = t.outY - t.inY;
 
-            int ovx = static_cast<int>(std::min<uint32_t>(m_impl->denoiserOverlap, t.inW/2));
-            int ovy = static_cast<int>(std::min<uint32_t>(m_impl->denoiserOverlap, t.inH/2));
+            int ovx = static_cast<int>(std::min<uint32_t>(m_impl->denoiser.overlap, t.inW/2));
+            int ovy = static_cast<int>(std::min<uint32_t>(m_impl->denoiser.overlap, t.inH/2));
             void* mergeArgs[] = {
-                &m_impl->d_tileBuffer,
+                &m_impl->denoiser.tileBuffers.tileBuffer,
                 &t.inW,
                 &t.inH,
                 &t.inX,
@@ -782,8 +729,8 @@ void Renderer::render(
                 &offY,
                 &width,
                 &height,
-                &m_impl->d_mergeAccum,
-                &m_impl->d_mergeWeight,
+                &m_impl->mergeBuffers.d_mergeAccum,
+                &m_impl->mergeBuffers.d_mergeWeight,
                 &ovx,
                 &ovy
             };
@@ -794,24 +741,24 @@ void Renderer::render(
             unsigned int gridY = (t.inH + blockY - 1) / blockY;
 
             CU_CHECK(cuLaunchKernel(
-                m_impl->mergeKernel,
-                gridX, gridY, 1,
-                blockX, blockY, 1,
-                0,
-                0,
-                mergeArgs,
-                nullptr
-            ));
+            m_impl->kernelFunctions.mergeKernel,
+            gridX, gridY, 1,
+            blockX, blockY, 1,
+            0,
+            0,
+            mergeArgs,
+            nullptr
+        ));
         }
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // Normalize merged accumulators into the denoiser output image
         {
-            void* normArgs[] = { &m_impl->d_mergeAccum, &m_impl->d_mergeWeight, &m_impl->d_denoiserOutput, &width, &height };
+            void* normArgs[] = { &m_impl->mergeBuffers.d_mergeAccum, &m_impl->mergeBuffers.d_mergeWeight, &m_impl->denoiser.imageBuffers.d_output, &width, &height };
             const unsigned int normBlock = 256;
             unsigned int normGrid = (m_impl->numPixels + normBlock - 1) / normBlock;
             CU_CHECK(cuLaunchKernel(
-                m_impl->normalizeKernel,
+                m_impl->kernelFunctions.normalizeKernel,
                 normGrid, 1, 1,
                 normBlock, 1, 1,
                 0,
@@ -826,7 +773,7 @@ void Renderer::render(
         if (!diagPoints.empty()) {
             for (auto &p : diagPoints) {
                 float4 tmp = {};
-                void* outAddr = (void*)(m_impl->d_denoiserOutput + (p.gy * width + p.gx) * sizeof(float4));
+                void* outAddr = (void*)(m_impl->denoiser.imageBuffers.d_output + (p.gy * width + p.gx) * sizeof(float4));
                 CUDA_CHECK(cudaMemcpy(&tmp, outAddr, sizeof(float4), cudaMemcpyDeviceToHost));
                 p.afterCopyBack = tmp;
             }
@@ -850,7 +797,7 @@ void Renderer::render(
         std::vector<float4> denoised(m_impl->numPixels);
         CUDA_CHECK(cudaMemcpy(
             denoised.data(),
-            (void*)m_impl->d_denoiserOutput,
+            (void*)m_impl->denoiser.imageBuffers.d_output,
             m_impl->numPixels * sizeof(float4),
             cudaMemcpyDeviceToHost
         ));
@@ -872,7 +819,7 @@ void Renderer::render(
         std::vector<float3> accumBuffer(m_impl->numPixels);
         CUDA_CHECK(cudaMemcpy(
             accumBuffer.data(),
-            (void*)m_impl->d_accumBuffer,
+            (void*)m_impl->accumBuffers.d_accumBuffer,
             m_impl->numPixels * sizeof(float3),
             cudaMemcpyDeviceToHost
         ));
@@ -927,6 +874,17 @@ void Renderer::render(
         config.enableTiling,
         config.tileWidth,
         config.tileHeight
+    );
+}
+
+void Renderer::render(const RenderParams& params) {
+    render(
+        params.scene,
+        *params.camera,
+        params.outputBuffer,
+        params.width,
+        params.height,
+        params.config
     );
 }
 
