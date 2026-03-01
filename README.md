@@ -25,6 +25,9 @@
 * **材质系统**:
   - Lambertian BRDF（理想漫反射）
   - Emissive 材质（自发光）
+  - UE4 PBR 材质、微表面材质等多种材质类型
+  - **统一的结构体参数 API**（支持 13 种材质类型的结构体参数）
+  - `MaterialParams` std::variant 统一接口
 * **光源**:
   - 点光源
   - 面光源（矩形）
@@ -34,6 +37,10 @@
 * **输出**:
   - PNG 图像（通过 stb_image_write）
   - Gamma 校正（2.2）
+* **API 改进**:
+  - 提供双接口（传统多参数 + 新结构体参数）
+  - 向后兼容，保留所有原有方法
+  - 类型安全的结构体参数设计
 
 ### 计划中 🔲
 * **材质**: Specular BRDF、GGX 微表面、混合材质
@@ -106,6 +113,8 @@ cmake --build build --config Release --target cornell_box_test
 
 完整示例请参考 `libOptixW/test/cornell_box_test.cpp`。
 
+### 传统 API 方式
+
 ```cpp
 #include <optixw/optixw.h>
 
@@ -143,6 +152,50 @@ optixw::Camera camera = {
 optixw::Renderer* renderer = context.createRenderer();
 std::vector<optixw::RGB> image(1024 * 1024);
 renderer->render(scene, camera, image.data(), 1024, 1024, 64);  // 64 SPP
+```
+
+### 新的结构体参数 API（推荐）
+
+```cpp
+#include <optixw/optixw.h>
+
+// 1. 初始化 OptiX 上下文
+optixw::Context context(0);  // 使用 GPU 0
+
+// 2. 创建场景
+optixw::Scene* scene = context.createScene();
+
+// 3. 添加材质（使用结构体参数）
+uint32_t whiteMat = scene->addMaterial(optixw::MatteMaterialParams{
+    .albedo = {0.75f, 0.75f, 0.75f}
+});
+
+uint32_t metalMat = scene->addMaterial(optixw::MetalMaterialParams{
+    .albedo = {0.9f, 0.7f, 0.3f},
+    .roughness = 0.1f
+});
+
+uint32_t lightMat = scene->addMaterial(optixw::DiffuseEmitterParams{
+    .emittance = {10.0f, 10.0f, 10.0f},
+    .scale = 1.0f
+});
+
+// 4. 添加几何体（使用结构体参数）
+optixw::TriangleMeshParams meshParams;
+meshParams.vertices = std::span(vertices, 9);
+meshParams.indices = std::span(indices, 3);
+meshParams.materialId = whiteMat;
+scene->addTriangleMesh(meshParams);
+
+// 5. 渲染配置（使用结构体参数）
+optixw::RenderConfig renderConfig;
+renderConfig.spp = 64;
+renderConfig.enableDenoiser = true;
+renderConfig.denoiserBlend = 0.0f;
+
+optixw::Renderer* renderer = context.createRenderer();
+std::vector<optixw::RGB> image(1024 * 1024);
+renderer->render(scene, camera, image.data(), 1024, 1024, renderConfig);
 ```
 
 ## 项目结构
