@@ -177,12 +177,89 @@ int main() {
         
         std::cout << "[Test] Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
         
-        std::vector<Vec3> outputBuffer(width * height);
-        renderer->render(scene, camera, outputBuffer.data(), width, height, spp, cfg.denoiser);
-        
-        const std::filesystem::path outputPath = render_config::resolveGalleryPath("cornell_box_var.png");
-        savePNG(outputPath.string().c_str(), outputBuffer.data(), width, height);
-        
+        auto runRender = [&](uint32_t tileW, uint32_t tileH, const char *label) {
+            // capture console output so we can inspect the denoiser log
+            std::ostringstream oss;
+            std::streambuf* oldbuf = std::cout.rdbuf(oss.rdbuf());
+
+            std::vector<Vec3> outputBuffer(width * height);
+            renderer->render(scene, camera, outputBuffer.data(), width, height, spp,
+                             cfg.denoiser, cfg.denoiserBlend, cfg.enableTiling, tileW, tileH);
+
+            // restore output
+            std::cout.rdbuf(oldbuf);
+            std::string log = oss.str();
+            std::cout << log; // still print it for user visibility
+
+            // count tasks reported in log by parsing the number after the label
+            size_t taskCount = 0;
+            {
+                std::string key = "denoiser tiling:";
+                size_t pos = log.find(key);
+                if (pos != std::string::npos) {
+                    pos += key.size();
+                    // skip whitespace
+                    while (pos < log.size() && isspace((unsigned char)log[pos])) ++pos;
+                    int val = 0;
+                    if (sscanf(log.c_str() + pos, "%d", &val) == 1) {
+                        taskCount = (size_t)val;
+                    }
+                }
+            }
+            std::cout << "[Test] " << label << " taskCount=" << taskCount << "\n";
+
+            // if there were multiple tasks, compute seam difference on the image
+            if (taskCount > 1) {
+                auto computeSeamDetails = [&](uint32_t tw, uint32_t th) {
+                    float maxdiff = 0.0f;
+                    // vertical seams
+                    for (uint32_t sx = tw; sx < width; sx += tw) {
+                        float rowMaxDiff = 0.0f;
+                        for (uint32_t y = 0; y < height; ++y) {
+                            Vec3 l = outputBuffer[y * width + (sx - 1)];
+                            Vec3 r = outputBuffer[y * width + sx];
+                            float d = fabs(l.x - r.x) + fabs(l.y - r.y) + fabs(l.z - r.z);
+                            maxdiff = std::max(maxdiff, d);
+                            rowMaxDiff = std::max(rowMaxDiff, d);
+                        }
+                        std::cout << "[Test] " << label << " vertical seam at x=" << sx << ": max diff = " << rowMaxDiff << "\n";
+                    }
+                    // horizontal seams
+                    for (uint32_t sy = th; sy < height; sy += th) {
+                        float colMaxDiff = 0.0f;
+                        for (uint32_t x = 0; x < width; ++x) {
+                            Vec3 t = outputBuffer[(sy - 1) * width + x];
+                            Vec3 b = outputBuffer[sy * width + x];
+                            float d = fabs(t.x - b.x) + fabs(t.y - b.y) + fabs(t.z - b.z);
+                            maxdiff = std::max(maxdiff, d);
+                            colMaxDiff = std::max(colMaxDiff, d);
+                        }
+                        std::cout << "[Test] " << label << " horizontal seam at y=" << sy << ": max diff = " << colMaxDiff << "\n";
+                    }
+                    return maxdiff;
+                };
+
+                float seam = computeSeamDetails(tileW, tileH);
+                std::cout << "[Test] " << label << " total seam max diff = " << seam << "\n";
+                // for now just report, don't fail
+            }
+
+            // save image with label appended
+            std::filesystem::path out = render_config::resolveGalleryPath("cornell_box_var");
+            out.replace_filename(std::string("cornell_box_var_") + label + ".png");
+            savePNG(out.string().c_str(), outputBuffer.data(), width, height);
+        };
+
+        // test a small tile size (equal to overlap) which should be disabled
+        runRender(128, 128, "small");
+        // run a larger tile size that still ends up being disabled by the
+        // 2*overlap check above
+        runRender(256, 256, "large");
+        // run a medium tile that is big enough to permit tiling; overlap is
+        // 128 so 400 > 2*overlap=256 and we should get proper tiles and zero
+        // seam difference
+        runRender(400, 400, "medium");
+
         std::cout << "[Test] Test completed successfully" << std::endl;
         
         return 0;

@@ -20,6 +20,10 @@ struct RenderConfig {
     uint32_t height = 512;
     uint32_t spp = 4;
     bool denoiser = true;
+    float denoiserBlend = 0.0f;  // blend factor used by OptiX denoiser
+    bool enableTiling = false;   // enable tile-based denoiser processing
+    uint32_t tileWidth = 0;      // 0 = full image, otherwise specify tile dims for denoiser
+    uint32_t tileHeight = 0;
 };
 
 namespace render_config {
@@ -87,6 +91,15 @@ inline bool parseUInt32(const std::string& text, uint32_t* outValue) {
             return false;
         }
         *outValue = static_cast<uint32_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+inline bool parseFloat(const std::string& text, float* outValue) {
+    try {
+        *outValue = std::stof(text);
         return true;
     } catch (...) {
         return false;
@@ -164,6 +177,17 @@ inline RenderConfig load(const std::string& sectionName, const RenderConfig& def
             config.spp = parsed;
         } else if (key == "denoiser") {
             config.denoiser = (parsed != 0);
+        } else if (key == "denoiserblend") {
+            float f;
+            if (parseFloat(value, &f)) {
+                config.denoiserBlend = f;
+            }
+        } else if (key == "tilewidth") {
+            config.tileWidth = parsed;
+        } else if (key == "tileheight") {
+            config.tileHeight = parsed;
+        } else if (key == "tiling") {
+            config.enableTiling = (parsed != 0);
         }
     }
 

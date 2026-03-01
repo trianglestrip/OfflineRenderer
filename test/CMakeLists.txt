@@ -21,6 +21,12 @@ function(add_optixw_test TEST_NAME SOURCE_FILE)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/${CMAKE_BUILD_TYPE}"
     )
 
+    if(MSVC)
+        # suppress LNK4098 warning by explicitly ignoring the conflicting
+        # LIBCMT default library - runtime library is controlled globally
+        target_link_options(${TEST_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
+    endif()
+
     add_custom_command(TARGET ${TEST_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_BINARY_DIR}/ptx"

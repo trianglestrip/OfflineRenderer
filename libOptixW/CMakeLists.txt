@@ -21,6 +21,8 @@ set(OPTIXW_SOURCES
     "src/context.cpp"
     "src/scene.cpp"
     "src/renderer.cpp"
+    "src/renderer_pipeline.cpp"
+    "src/renderer_loop.cpp"
     "src/scheduler.cpp"
 )
 
@@ -45,6 +47,7 @@ set(OPTIXW_DRIVER_KERNELS
     "kernels/shade.cu"
     "kernels/compact.cu"
     "kernels/scale.cu"
+    "kernels/denoise_merge.cu"
 )
 
 # Create static library

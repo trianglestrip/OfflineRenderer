@@ -17,6 +17,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # Keep runtime library consistent across all C++ targets to avoid LNK4098.
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # globally disable codepage warning caused by non-ASCII characters in
+    # third-party headers; easier than converting all files to UTF-8.
+    add_compile_options(/wd4819)
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

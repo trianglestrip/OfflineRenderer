@@ -885,6 +885,26 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
 
     const MaterialData& mat = params.materials[hit.materialId];
     const MaterialData resolvedMat = resolveMaterial(mat, hit, params.textures, params.numTextures);
+
+    // record guide features for the denoiser on the first bounce only.  we
+    // always write them if the pointers are non-null; they are allocated by
+    // the host when denoising is enabled.  normal is remapped to [0,1] space
+    // because OptiX expects positive values in the guide layer.
+    if (ray.depth == 0) {
+        if (params.albedoBuffer) {
+            params.albedoBuffer[ray.pixelIndex] = resolvedMat.baseColor;
+        }
+        if (params.normalBuffer) {
+            float3 n = hit.normal;
+            // encode unit normal into 0..1
+            params.normalBuffer[ray.pixelIndex] = make_float3(
+                n.x * 0.5f + 0.5f,
+                n.y * 0.5f + 0.5f,
+                n.z * 0.5f + 0.5f
+            );
+        }
+    }
+
     if (isEmitterMaterial(resolvedMat, params.materials, params.numMaterials)) {
         float3 Le = emitterRadianceResolved(resolvedMat, params.materials, params.numMaterials, -ray.direction);
         ray.radiance = ray.radiance + ray.throughput * Le;

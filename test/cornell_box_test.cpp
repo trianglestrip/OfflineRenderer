@@ -217,7 +217,7 @@ int main() {
         std::cout << "[Test] Rendering " << width << "x" << height 
                   << " @ " << spp << " spp..." << std::endl;
         
-        renderer->render(scene, camera, image.data(), width, height, spp, cfg.denoiser);
+        renderer->render(scene, camera, image.data(), width, height, spp, cfg.denoiser, cfg.denoiserBlend, cfg.enableTiling, cfg.tileWidth, cfg.tileHeight);
         
         const std::filesystem::path outputPath = render_config::resolveGalleryPath("cornell_box.png");
         savePNG(outputPath.string().c_str(), image.data(), width, height);

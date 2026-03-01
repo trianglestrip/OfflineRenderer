@@ -15,6 +15,12 @@ struct ShadeKernelParams {
     const MaterialData* materials;
     const Texture2DData* textures;
     float3* accumBuffer;
+    // optional guidance buffers used by the denoiser.  These are filled by
+    // the kernel when a primary ray hits a surface so that the host can
+    // forward albedo/normal information to OptiX's guide layers.  The
+    // pointers may be null when the renderer isn't tracking guides.
+    float3* albedoBuffer;
+    float3* normalBuffer;
     uint32_t numTriangles;
     uint32_t numMaterials;
     uint32_t numTextures;

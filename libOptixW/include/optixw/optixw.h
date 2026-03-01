@@ -1,10 +1,20 @@
 #pragma once
 
+// disable warning about characters outside current code page
+#pragma warning(push)
+#pragma warning(disable:4819)
+
 #include <optixw/types.h>
 #include <memory>
 #include <span>
 
 namespace optixw {
+
+// Global OptiX device context (defined in context.cpp)
+extern OptixDeviceContext g_optixContext;
+
+// Pimpl implementation type (defined in renderer_impl.h)
+class Impl;
 
 // Forward declarations
 class Scene;
@@ -149,6 +159,12 @@ public:
     ~Renderer();
     
     // Render scene
+    // Render the provided scene into `outputBuffer` (width*height pixels).
+    // spp: samples per pixel.  enableDenoiser toggles the OptiX denoiser, and
+    // blendFactor is passed through to `OptixDenoiserParams.blendFactor` to
+    // mix the original beauty buffer with the denoised result (0.0 = full
+    // denoiser output, 1.0 = no denoising).  Useful when the network is over‑
+    // aggressive at higher sample counts.
     void render(
         Scene* scene,
         const Camera& camera,
@@ -156,12 +172,17 @@ public:
         uint32_t width,
         uint32_t height,
         uint32_t spp = 1,
-        bool enableDenoiser = false
+        bool enableDenoiser = false,
+        float denoiserBlend = 0.0f,
+            bool enableTiling = false,
+        uint32_t tileWidth = 0,
+        uint32_t tileHeight = 0
     );
     
 private:
-    class Impl;
     std::unique_ptr<Impl> m_impl;
 };
 
 } // namespace optixw
+
+#pragma warning(pop)
