@@ -24,6 +24,10 @@ public:
     static uint32_t getEnvironmentMapWidth(Scene* scene);
     static uint32_t getEnvironmentMapHeight(Scene* scene);
     static float getEnvironmentMapScale(Scene* scene);
+    static CUdeviceptr getPointLightsPtr(Scene* scene);
+    static CUdeviceptr getAreaLightsPtr(Scene* scene);
+    static uint32_t getNumPointLights(Scene* scene);
+    static uint32_t getNumAreaLights(Scene* scene);
 };
 
 } // namespace optixw

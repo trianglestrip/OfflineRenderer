@@ -38,39 +38,37 @@ extern "C" __global__ void __raygen__trace() {
     const uint32_t rayIndex = params.activeIndices[idx];
     RayState& ray = params.rayPool[rayIndex];
     
-    // If ray is not initialized (first iteration), initialize it
-    if (ray.depth == 0 && ray.stage != RayState::Trace) {
-        // Pixel coordinates
-        uint32_t px = rayIndex % params.width;
-        uint32_t py = rayIndex / params.width;
-        
-        // NDC coordinates [-1, 1]
-        float ndcX = (2.0f * (px + 0.5f) / params.width - 1.0f) * params.camera.aspect;
-        float ndcY = 1.0f - 2.0f * (py + 0.5f) / params.height;
-        
-        // Ray direction
-        float3 rayDir = params.camera.forward + 
-                       params.camera.right * ndcX * params.camera.tanHalfFovY +
-                       params.camera.up * ndcY * params.camera.tanHalfFovY;
-        rayDir = normalize(rayDir);
-        
-        ray.origin = params.camera.position;
-        ray.direction = rayDir;
-        ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
-        ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
-        ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
-        ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
-        ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
-        ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
-        ray.pixelIndex = rayIndex;
-        ray.depth = 0;
-        ray.stage = RayState::Trace;
-        ray.terminateAfterShadow = 0;
-        ray.insideMedium = 0;
-        ray.seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
-        ray.tMin = 0.001f;
-        ray.tMax = 1e20f;
-    }
+    // Always initialize the ray for each sample
+    // Pixel coordinates
+    uint32_t px = rayIndex % params.width;
+    uint32_t py = rayIndex / params.width;
+    
+    // NDC coordinates [-1, 1]
+    float ndcX = (2.0f * (px + 0.5f) / params.width - 1.0f) * params.camera.aspect;
+    float ndcY = 1.0f - 2.0f * (py + 0.5f) / params.height;
+    
+    // Ray direction
+    float3 rayDir = params.camera.forward + 
+                   params.camera.right * ndcX * params.camera.tanHalfFovY +
+                   params.camera.up * ndcY * params.camera.tanHalfFovY;
+    rayDir = normalize(rayDir);
+    
+    ray.origin = params.camera.position;
+    ray.direction = rayDir;
+    ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
+    ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+    ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
+    ray.pixelIndex = rayIndex;
+    ray.depth = 0;
+    ray.stage = RayState::Trace;
+    ray.terminateAfterShadow = 0;
+    ray.insideMedium = 0;
+    ray.seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
+    ray.tMin = 0.001f;
+    ray.tMax = 1e20f;
     
     // Trace ray using OptiX
     uint32_t hitFlag = 0;

@@ -223,6 +223,89 @@ void Scene::addTriangleMesh(
         nullptr,  // no texcoords
         materialId
     );
+    
+    // Check if this material is an emitter and add it as an area light
+    if (materialId < m_impl->materialManager->getNumMaterials()) {
+        const MaterialData& material = m_impl->materialManager->getMaterial(materialId);
+        // Check if material is an emitter (either by type or by having emission value)
+        bool isEmitter = (material.type >= 8) || (material.emission.x > 0.0f || material.emission.y > 0.0f || material.emission.z > 0.0f);
+        if (isEmitter) {
+            // For each triangle in the mesh, create an area light
+            const uint32_t triangleCount = static_cast<uint32_t>(inds.size() / 3);
+            for (uint32_t i = 0; i < triangleCount; ++i) {
+                uint32_t i0 = inds[i * 3 + 0];
+                uint32_t i1 = inds[i * 3 + 1];
+                uint32_t i2 = inds[i * 3 + 2];
+                
+                // Get triangle vertices
+                float v0x = verts[i0 * 3 + 0];
+                float v0y = verts[i0 * 3 + 1];
+                float v0z = verts[i0 * 3 + 2];
+                float v1x = verts[i1 * 3 + 0];
+                float v1y = verts[i1 * 3 + 1];
+                float v1z = verts[i1 * 3 + 2];
+                float v2x = verts[i2 * 3 + 0];
+                float v2y = verts[i2 * 3 + 1];
+                float v2z = verts[i2 * 3 + 2];
+                
+                // Compute triangle center
+                float centerx = (v0x + v1x + v2x) / 3.0f;
+                float centery = (v0y + v1y + v2y) / 3.0f;
+                float centerz = (v0z + v1z + v2z) / 3.0f;
+                
+                // Compute normal
+                float edge1x = v1x - v0x;
+                float edge1y = v1y - v0y;
+                float edge1z = v1z - v0z;
+                float edge2x = v2x - v0x;
+                float edge2y = v2y - v0y;
+                float edge2z = v2z - v0z;
+                float normalx = edge1y * edge2z - edge1z * edge2y;
+                float normaly = edge1z * edge2x - edge1x * edge2z;
+                float normalz = edge1x * edge2y - edge1y * edge2x;
+                float len = sqrtf(normalx * normalx + normaly * normaly + normalz * normalz);
+                if (len > 0.0f) {
+                    normalx /= len;
+                    normaly /= len;
+                    normalz /= len;
+                }
+                
+                // Compute width and height (simplified)
+                float width = sqrtf(edge1x * edge1x + edge1y * edge1y + edge1z * edge1z);
+                float height = sqrtf(edge2x * edge2x + edge2y * edge2y + edge2z * edge2z);
+                
+                // Create area light
+                AreaLightData lightData;
+                lightData.position = make_float3(centerx, centery, centerz);
+                lightData.normal = make_float3(normalx, normaly, normalz);
+                lightData.emission = material.emission;
+                lightData.width = width;
+                lightData.height = height;
+                lightData.doubleSided = 1;
+                
+                // Compute tangent and bitangent
+                float upx = fabs(normaly) < 0.9f ? 0.0f : 1.0f;
+                float upy = fabs(normaly) < 0.9f ? 1.0f : 0.0f;
+                float upz = 0.0f;
+                float tangentx = upy * normalz - upz * normaly;
+                float tangenty = upz * normalx - upx * normalz;
+                float tangentz = upx * normaly - upy * normalx;
+                float tangentLen = sqrtf(tangentx * tangentx + tangenty * tangenty + tangentz * tangentz);
+                if (tangentLen > 0.0f) {
+                    tangentx /= tangentLen;
+                    tangenty /= tangentLen;
+                    tangentz /= tangentLen;
+                }
+                float bitangentx = normaly * tangentz - normalz * tangenty;
+                float bitangenty = normalz * tangentx - normalx * tangentz;
+                float bitangentz = normalx * tangenty - normaly * tangentx;
+                lightData.tangent = make_float3(tangentx, tangenty, tangentz);
+                lightData.bitangent = make_float3(bitangentx, bitangenty, bitangentz);
+                
+                m_impl->lightManager->addAreaLight(lightData);
+            }
+        }
+    }
 }
 
 void Scene::addTriangleMeshWithTexcoords(
@@ -546,6 +629,22 @@ uint32_t SceneAccessor::getEnvironmentMapHeight(Scene* scene) {
 
 float SceneAccessor::getEnvironmentMapScale(Scene* scene) {
     return scene->m_impl->lightManager->getEnvironmentMapScale();
+}
+
+CUdeviceptr SceneAccessor::getPointLightsPtr(Scene* scene) {
+    return scene->m_impl->lightManager->getPointLightsBuffer();
+}
+
+CUdeviceptr SceneAccessor::getAreaLightsPtr(Scene* scene) {
+    return scene->m_impl->lightManager->getAreaLightsBuffer();
+}
+
+uint32_t SceneAccessor::getNumPointLights(Scene* scene) {
+    return scene->m_impl->lightManager->getNumPointLights();
+}
+
+uint32_t SceneAccessor::getNumAreaLights(Scene* scene) {
+    return scene->m_impl->lightManager->getNumAreaLights();
 }
 
 } // namespace optixw

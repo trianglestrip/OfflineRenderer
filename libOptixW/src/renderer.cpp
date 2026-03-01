@@ -21,7 +21,7 @@
 #endif
 #include <cmath>
 #include "utils/checks.h"
-#include "optixw/renderer_impl.h"
+#include "optixw/renderer_impl_public.h"
 
 namespace optixw {
 
@@ -298,6 +298,12 @@ void Renderer::render(
     m_impl->environmentMap.width = SceneAccessor::getEnvironmentMapWidth(scene);
     m_impl->environmentMap.height = SceneAccessor::getEnvironmentMapHeight(scene);
     m_impl->environmentMap.scale = SceneAccessor::getEnvironmentMapScale(scene);
+    
+    // Get light data
+    m_impl->lightBuffers.d_pointLights = SceneAccessor::getPointLightsPtr(scene);
+    m_impl->lightBuffers.d_areaLights = SceneAccessor::getAreaLightsPtr(scene);
+    m_impl->lightBuffers.numPointLights = SceneAccessor::getNumPointLights(scene);
+    m_impl->lightBuffers.numAreaLights = SceneAccessor::getNumAreaLights(scene);
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     

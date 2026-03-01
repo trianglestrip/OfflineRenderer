@@ -30,6 +30,10 @@ struct ShadeKernelParams {
     uint32_t environmentMapWidth;
     uint32_t environmentMapHeight;
     float environmentMapScale;
+    const PointLightData* pointLights;
+    const AreaLightData* areaLights;
+    uint32_t numPointLights;
+    uint32_t numAreaLights;
 };
 
 struct CompactKernelParams {

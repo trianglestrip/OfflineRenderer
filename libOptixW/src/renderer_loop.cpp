@@ -1,5 +1,5 @@
 #include "optixw/optixw.h"
-#include "optixw/renderer_impl.h"
+#include "optixw/renderer_impl_public.h"
 #include <vector>
 #include <iostream>
 
@@ -27,7 +27,8 @@ void Impl::renderSample(
     }
 
     // Each sample must restart path state from primary rays.
-    CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_rayPool, 0, maxRays * sizeof(RayState)));
+    // 只在第一次迭代时清零 rayPool，而不是每次迭代都清零
+    // CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_rayPool, 0, maxRays * sizeof(RayState)));
 
     // Initialize active rays (all pixels)
     std::vector<uint32_t> activeIndices(numPixels);
@@ -118,6 +119,10 @@ void Impl::renderSample(
         shadeParams.environmentMapWidth = environmentMap.width;
         shadeParams.environmentMapHeight = environmentMap.height;
         shadeParams.environmentMapScale = environmentMap.scale;
+        shadeParams.pointLights = reinterpret_cast<const PointLightData*>(lightBuffers.d_pointLights);
+        shadeParams.areaLights = reinterpret_cast<const AreaLightData*>(lightBuffers.d_areaLights);
+        shadeParams.numPointLights = lightBuffers.numPointLights;
+        shadeParams.numAreaLights = lightBuffers.numAreaLights;
 
         void* shadeArgs[] = { &shadeParams };
         CU_CHECK(cuLaunchKernel(
@@ -160,5 +165,51 @@ void Impl::renderSample(
         CUdeviceptr temp = activeIn;
     activeIn = activeOut;
     activeOut = temp;
+}
+
+// After all iterations, make sure all terminated rays have their radiance accumulated
+// We need to run a final pass to accumulate radiance from all rays
+{
+    const uint32_t numBlocks = (numPixels + blockSize - 1) / blockSize;
+    
+    ShadeKernelParams finalShadeParams = {};
+    finalShadeParams.rayPool = reinterpret_cast<RayState*>(wavefrontBuffers.d_rayPool);
+    finalShadeParams.activeIndices = reinterpret_cast<const uint32_t*>(wavefrontBuffers.d_activeIndices);
+    finalShadeParams.hitBuffer = reinterpret_cast<const HitInfo*>(wavefrontBuffers.d_hitBuffer);
+    finalShadeParams.vertices = reinterpret_cast<const float*>(d_vertices);
+    finalShadeParams.texcoords = reinterpret_cast<const float*>(materialTextureBuffers.d_texcoords);
+    finalShadeParams.indices = reinterpret_cast<const uint32_t*>(d_indices);
+    finalShadeParams.triangleMaterialIds = reinterpret_cast<const uint32_t*>(d_triangleMaterialIds);
+    finalShadeParams.materials = reinterpret_cast<const MaterialData*>(materialTextureBuffers.d_materials);
+    finalShadeParams.textures = reinterpret_cast<const Texture2DData*>(materialTextureBuffers.d_textures);
+    finalShadeParams.accumBuffer = reinterpret_cast<float3*>(accumBuffers.d_accumBuffer);
+    finalShadeParams.albedoBuffer = reinterpret_cast<float3*>(accumBuffers.d_albedoBuffer);
+    finalShadeParams.normalBuffer = reinterpret_cast<float3*>(accumBuffers.d_normalBuffer);
+    finalShadeParams.numTriangles = materialTextureBuffers.numTriangles;
+    finalShadeParams.numMaterials = materialTextureBuffers.numMaterials;
+    finalShadeParams.numTextures = materialTextureBuffers.numTextures;
+    finalShadeParams.numActive = numPixels;
+    finalShadeParams.environmentRadiance = environmentRadiance;
+    finalShadeParams.environmentMap = reinterpret_cast<const float4*>(environmentMap.d_map);
+    finalShadeParams.environmentMapWidth = environmentMap.width;
+    finalShadeParams.environmentMapHeight = environmentMap.height;
+    finalShadeParams.environmentMapScale = environmentMap.scale;
+    finalShadeParams.pointLights = reinterpret_cast<const PointLightData*>(lightBuffers.d_pointLights);
+    finalShadeParams.areaLights = reinterpret_cast<const AreaLightData*>(lightBuffers.d_areaLights);
+    finalShadeParams.numPointLights = lightBuffers.numPointLights;
+    finalShadeParams.numAreaLights = lightBuffers.numAreaLights;
+
+    void* finalShadeArgs[] = { &finalShadeParams };
+    CU_CHECK(cuLaunchKernel(
+        kernelFunctions.shadeKernel,
+        numBlocks, 1, 1,
+        blockSize, 1, 1,
+        0,
+        0,
+        finalShadeArgs,
+        nullptr
+    ));
+    
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 }

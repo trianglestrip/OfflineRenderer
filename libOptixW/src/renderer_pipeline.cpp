@@ -1,5 +1,5 @@
 #include "optixw/optixw.h"
-#include "optixw/renderer_impl.h"
+#include "optixw/renderer_impl_public.h"
 #include <vector>
 #include <string>
 #include <iostream>

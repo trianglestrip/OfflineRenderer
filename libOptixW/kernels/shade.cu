@@ -862,8 +862,12 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
     uint32_t rayIndex = params.activeIndices[idx];
     RayState& ray = params.rayPool[rayIndex];
 
-    if (ray.stage == RayState::Terminated) {
+    // 无论光线处于什么阶段，都累积其 radiance
+    if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
         params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
+    }
+    
+    if (ray.stage == RayState::Terminated) {
         return;
     }
     if (ray.stage != RayState::Shade) {
@@ -945,12 +949,11 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
             float dist2 = dot(toLight, toLight);
             if (dist2 > 1e-8f && lightPdfArea > 1e-8f && lightMatId < params.numMaterials) {
                 shadowWi = normalize(toLight);
-                float cosSurfaceAbs = fabsf(dot(hit.normal, shadowWi));
+                float cosSurface = fmaxf(0.0f, dot(hit.normal, shadowWi));
                 float cosLight = fmaxf(0.0f, dot(lightNormal, -shadowWi));
-                if (cosSurfaceAbs > 0.0f && cosLight > 0.0f) {
+                if (cosSurface > 0.0f && cosLight > 0.0f) {
                     const MaterialData& lightMat = params.materials[lightMatId];
-                    float3 Le = emitterRadianceResolved(
-                        lightMat, params.materials, params.numMaterials, -shadowWi);
+                    float3 Le = lightMat.emission * fmaxf(lightMat.emitterScale, 1.0f);
                     if (hasValue(Le)) {
                         float3 f = evalMaterialBSDF(
                             resolvedMat,
@@ -963,7 +966,7 @@ extern "C" __global__ void shade(ShadeKernelParams params) {
                             wo,
                             shadowWi);
                         if (hasValue(f)) {
-                            float geom = (cosSurfaceAbs * cosLight) / dist2;
+                            float geom = (cosSurface * cosLight) / dist2;
                             directContribution = ray.throughput * f * Le * (geom / lightPdfArea);
                             hasDirectSample = hasValue(directContribution);
                             shadowDist = sqrtf(dist2);

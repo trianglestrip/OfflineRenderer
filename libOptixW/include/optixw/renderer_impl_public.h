@@ -44,6 +44,14 @@ public:
 
     bool pipelineCreated;
 
+    // Light buffers
+    struct LightBuffers {
+        CUdeviceptr d_pointLights;
+        CUdeviceptr d_areaLights;
+        uint32_t numPointLights;
+        uint32_t numAreaLights;
+    } lightBuffers;
+
     // Task scheduler for CPU-side parallelism
     class TaskScheduler* scheduler;
 
