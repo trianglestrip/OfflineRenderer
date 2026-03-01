@@ -90,6 +90,7 @@ uint32_t MaterialManager::addDiffuseEmitterMaterial(const Vec3& emission) {
     mat.type = kDiffuseEmitter;
     mat.baseColor = make_float3(0.0f, 0.0f, 0.0f);
     mat.emission = toFloat3(emission);
+    mat.emitterScale = 1.0f;
     mat.roughness = 1.0f;
     mat.metallic = 0.0f;
     mat.iorInt = 1.0f;

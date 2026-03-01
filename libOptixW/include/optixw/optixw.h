@@ -6,6 +6,7 @@
 
 #include <optixw/types.h>
 #include <optixw/core/math_types.h>
+#include <optixw/core/task_scheduler.h>
 #include <memory>
 #include <span>
 
@@ -54,15 +55,19 @@ public:
     Scene* createScene();
     Renderer* createRenderer();
     
+    // Accessors
+    TaskScheduler* getTaskScheduler() { return m_taskScheduler.get(); }
+    
 private:
     class Impl;
     std::unique_ptr<Impl> m_impl;
+    std::unique_ptr<TaskScheduler> m_taskScheduler;
 };
 
 // Scene: Geometry and material management
 class Scene {
 public:
-    Scene();
+    explicit Scene(TaskScheduler* scheduler = nullptr);
     ~Scene();
     
     // Add geometry
@@ -102,6 +107,7 @@ public:
     uint32_t addGlassMaterial(const Vec3& albedo, float ior);
     uint32_t loadTexture2D(const char* filePath, bool sRGB = true);
     void setMaterialBaseColorTexture(uint32_t materialId, uint32_t textureId);
+    void setEnvironmentRadiance(const Vec3& radiance);
     void setEnvironmentMap(const char* filePath, float scale = 1.0f);
     
     // Add lights
@@ -110,6 +116,14 @@ public:
     
     // Finalize scene (build acceleration structures)
     void finalize();
+    
+    // ==================== 结构体版本的方法 ====================
+    uint32_t addMaterial(const MaterialParams& params);
+    
+    void addTriangleMesh(const TriangleMeshParams& params);
+    void addTriangleMeshWithTexcoords(const TriangleMeshParams& params);
+    uint32_t loadTexture2D(const TextureLoadParams& params);
+    void setEnvironmentMap(const EnvironmentMapParams& params);
     
 private:
     friend class Renderer;
@@ -122,7 +136,7 @@ private:
 // Renderer: Wavefront path tracing
 class Renderer {
 public:
-    Renderer();
+    explicit Renderer(TaskScheduler* scheduler = nullptr);
     ~Renderer();
     
     // Render scene
@@ -145,6 +159,14 @@ public:
         uint32_t tileWidth = 0,
         uint32_t tileHeight = 0
     );
+    
+    void render(
+        Scene* scene,
+        const Camera& camera,
+        Vec3* outputBuffer,
+        uint32_t width,
+        uint32_t height,
+        const RenderConfig& config);
     
 private:
     std::unique_ptr<Impl> m_impl;

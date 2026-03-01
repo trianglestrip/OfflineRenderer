@@ -1,5 +1,6 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
+#include "optixw/core/task_scheduler.h"
 #include "utils/checks.h"
 #include <optix.h>
 #include <optix_function_table_definition.h>
@@ -60,18 +61,18 @@ public:
     }
 };
 
-Context::Context(int deviceId) : m_impl(std::make_unique<Impl>()) {
+Context::Context(int deviceId) : m_impl(std::make_unique<Impl>()), m_taskScheduler(std::make_unique<TaskScheduler>()) {
     m_impl->initialize(deviceId);
 }
 
 Context::~Context() = default;
 
 Scene* Context::createScene() {
-    return new Scene();
+    return new Scene(m_taskScheduler.get());
 }
 
 Renderer* Context::createRenderer() {
-    return new Renderer();
+    return new Renderer(m_taskScheduler.get());
 }
 
 } // namespace optixw

@@ -186,17 +186,18 @@ void buildCornellBox(Scene* scene) {
 
 int main() {
     try {
-        std::cout << "=== libOptixW Cornell Box Test ===" << std::endl;
+        std::cout << "=== libOptixW Cornell Box Test with Taskflow Integration ===" << std::endl;
         
-        // Create context
+        // Create context (this now creates and manages TaskScheduler internally)
         Context context;
         
-        // Create scene
+        // Create scene (now uses the TaskScheduler from context)
         Scene* scene = context.createScene();
         buildCornellBox(scene);
+        scene->setEnvironmentRadiance(Vec3(0.1f, 0.1f, 0.1f));
         scene->finalize();
         
-        // Create renderer
+        // Create renderer (now uses the TaskScheduler from context)
         Renderer* renderer = context.createRenderer();
         
         // Setup camera

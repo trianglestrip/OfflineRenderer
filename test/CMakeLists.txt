@@ -4,12 +4,13 @@ function(add_optixw_test TEST_NAME SOURCE_FILE)
     add_executable(${TEST_NAME} ${SOURCE_FILE})
 
     target_include_directories(${TEST_NAME}
-        PRIVATE
-            ${CMAKE_SOURCE_DIR}/libOptixW/include
-            ${OptiX_INSTALL_DIR}/include
-            ${CUDAToolkit_INCLUDE_DIRS}
-            ${CMAKE_SOURCE_DIR}/ext/stb
-            ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libOptixW/include
+        ${OptiX_INSTALL_DIR}/include
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/ext/stb
+        ${CMAKE_SOURCE_DIR}/ext/taskflow
+        ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     target_link_libraries(${TEST_NAME}

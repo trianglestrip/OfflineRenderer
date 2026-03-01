@@ -115,8 +115,6 @@ extern "C" __global__ void __raygen__trace() {
         // Miss: accumulate environment radiance and terminate
         ray.radiance = ray.radiance + ray.throughput * sampleEnvironment(ray.direction);
         ray.stage = RayState::Terminated;
-        // Write to accumulation buffer
-        params.rayPool[rayIndex].radiance = ray.radiance;
     }
 }
 

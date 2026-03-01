@@ -217,4 +217,27 @@ void Denoiser::freeBuffers() {
     }
 }
 
+// ==================== 结构体版本的方法实现 ====================
+
+void Denoiser::setup(const DenoiserSetupParams& params) {
+    setup(params.width, params.height, params.useAlbedo, params.useNormal);
+}
+
+void Denoiser::denoise(const DenoiserParams& params) {
+    denoise(params.inputColor, params.inputAlbedo, params.inputNormal, params.output, params.stream);
+}
+
+void Denoiser::denoiseTiled(const DenoiserTiledParams& params) {
+    denoiseTiled(
+        params.inputColor, 
+        params.inputAlbedo, 
+        params.inputNormal, 
+        params.output, 
+        params.tileWidth, 
+        params.tileHeight, 
+        params.overlap, 
+        params.stream
+    );
+}
+
 } // namespace optixw

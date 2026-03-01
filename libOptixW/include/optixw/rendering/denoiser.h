@@ -60,11 +60,16 @@ public:
     bool isSetup() const { return m_setup; }
     uint32_t getWidth() const { return m_width; }
     uint32_t getHeight() const { return m_height; }
-
+    
     // 获取降噪器缓冲（供外部使用）
     CUdeviceptr getStateBuffer() const { return m_d_state; }
     CUdeviceptr getScratchBuffer() const { return m_d_scratch; }
     CUdeviceptr getIntensityBuffer() const { return m_d_intensity; }
+    
+    // ==================== 结构体版本的方法 ====================
+    void setup(const DenoiserSetupParams& params);
+    void denoise(const DenoiserParams& params);
+    void denoiseTiled(const DenoiserTiledParams& params);
 
 private:
     // OptiX 上下文

@@ -118,7 +118,8 @@ Impl::Impl()
             d_mergeAccum(0), d_mergeWeight(0),
       denoiserStateSize(0), denoiserScratchSize(0), denoiserWidth(0), denoiserHeight(0), denoiserOverlap(0),
       numPixels(0), maxRays(0), numMaterials(0), numTextures(0), numTriangles(0), environmentRadiance(make_float3(0.0f,0.0f,0.0f)),
-      d_environmentMap(0), environmentMapWidth(0), environmentMapHeight(0), environmentMapScale(1.0f), pipelineCreated(false)
+      d_environmentMap(0), environmentMapWidth(0), environmentMapHeight(0), environmentMapScale(1.0f), pipelineCreated(false),
+      scheduler(nullptr)
 {
 }
 
@@ -282,9 +283,13 @@ void Impl::ensureDenoiserBuffers(uint32_t width, uint32_t height,
     denoiserHeight = height;
 }
 
-Renderer::Renderer() : m_impl(std::make_unique<Impl>()) {}
+Renderer::Renderer(TaskScheduler* scheduler) : m_impl(std::make_unique<Impl>()) {
+    m_impl->scheduler = scheduler;  // Store the scheduler
+}
+
 Renderer::~Renderer() = default;
 
+// Main render method
 void Renderer::render(
     Scene* scene,
     const Camera& camera,
@@ -328,7 +333,7 @@ void Renderer::render(
     camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
     camData.aspect = camera.aspect;
     
-    // Get scene data
+    // Get scene data from new managers
     OptixTraversableHandle gasHandle = SceneAccessor::getGasHandle(scene);
     CUdeviceptr d_vertices = SceneAccessor::getVerticesPtr(scene);
     CUdeviceptr d_texcoords = SceneAccessor::getTexcoordsPtr(scene);
@@ -349,21 +354,59 @@ void Renderer::render(
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     
-    // Render samples
-    for (uint32_t sample = 0; sample < spp; ++sample) {
-        std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
+    // Render samples using Taskflow for parallelization if we have a scheduler
+    if (spp > 1 && m_impl->scheduler != nullptr) {
+        // Use Taskflow to parallelize sample rendering
+        tf::Taskflow taskflow;
         
-        m_impl->renderSample(
-            gasHandle,
-            d_vertices,
-            d_texcoords,
-            d_indices,
-            d_triangleMaterialIds,
-            camData,
-            width,
-            height,
-            sample
-        );
+        // Split samples into chunks for parallel processing
+        const uint32_t samplesPerChunk = std::max(1u, spp / std::min(spp, 4u)); // At most 4 chunks or 1 sample per chunk
+        
+        for (uint32_t chunkStart = 0; chunkStart < spp; chunkStart += samplesPerChunk) {
+            uint32_t chunkEnd = std::min(chunkStart + samplesPerChunk, spp);
+            
+            taskflow.emplace([this, gasHandle, d_vertices, d_texcoords, d_indices, d_triangleMaterialIds, 
+                             &camData, width, height, chunkStart, chunkEnd]() {
+                for (uint32_t sample = chunkStart; sample < chunkEnd; ++sample) {
+                    m_impl->renderSample(
+                        gasHandle,
+                        d_vertices,
+                        d_texcoords,
+                        d_indices,
+                        d_triangleMaterialIds,
+                        camData,
+                        width,
+                        height,
+                        sample
+                    );
+                }
+            });
+        }
+        
+        // Execute the taskflow
+        m_impl->scheduler->run(taskflow);
+        
+        // Print progress for each sample
+        for (uint32_t sample = 0; sample < spp; ++sample) {
+            std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
+        }
+    } else {
+        // Fall back to serial rendering if no scheduler or single sample
+        for (uint32_t sample = 0; sample < spp; ++sample) {
+            std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
+            
+            m_impl->renderSample(
+                gasHandle,
+                d_vertices,
+                d_texcoords,
+                d_indices,
+                d_triangleMaterialIds,
+                camData,
+                width,
+                height,
+                sample
+            );
+        }
     }
     
     std::cout << std::endl;
@@ -862,6 +905,29 @@ void Renderer::render(
     }
     
     std::cout << "[Renderer] Render complete" << std::endl;
+}
+
+void Renderer::render(
+    Scene* scene,
+    const Camera& camera,
+    Vec3* outputBuffer,
+    uint32_t width,
+    uint32_t height,
+    const RenderConfig& config)
+{
+    render(
+        scene,
+        camera,
+        outputBuffer,
+        width,
+        height,
+        config.spp,
+        config.enableDenoiser,
+        config.denoiserBlend,
+        config.enableTiling,
+        config.tileWidth,
+        config.tileHeight
+    );
 }
 
 } // namespace optixw

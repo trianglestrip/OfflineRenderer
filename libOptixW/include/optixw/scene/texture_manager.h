@@ -2,6 +2,7 @@
 #pragma once
 
 #include <optixw/core/task_scheduler.h>
+#include <optixw/types.h>  // 包含Texture2DData定义
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <vector>
@@ -9,14 +10,6 @@
 #include <cstdint>
 
 namespace optixw {
-
-// Texture2DData - 纹理数据结构（与 GPU 端共享）
-struct Texture2DData {
-    float4* pixels;
-    uint32_t width;
-    uint32_t height;
-    uint32_t pad;
-};
 
 // TextureManager - CPU 层纹理管理器
 // 职责：
@@ -49,7 +42,11 @@ public:
     // 访问器
     CUdeviceptr getDeviceBuffer() const { return m_d_textures; }
     uint32_t getNumTextures() const { return static_cast<uint32_t>(m_textures.size()); }
-
+    
+    // ==================== 结构体版本的方法 ====================
+    uint32_t loadTexture2D(const TextureLoadSingleParams& params);
+    std::vector<uint32_t> loadTextures(const TextureLoadBatchParams& params);
+    
     // 清空纹理数据
     void clear();
 

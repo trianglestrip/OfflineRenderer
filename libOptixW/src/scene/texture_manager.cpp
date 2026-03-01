@@ -225,10 +225,10 @@ void TextureManager::uploadToDevice() {
     // 创建纹理描述符数组
     std::vector<Texture2DData> textureDescs(m_textures.size());
     for (size_t i = 0; i < m_textures.size(); ++i) {
-        textureDescs[i].pixels = reinterpret_cast<float4*>(m_textures[i].d_pixels);
+        textureDescs[i].pixels = reinterpret_cast<const float4*>(m_textures[i].d_pixels);
         textureDescs[i].width = m_textures[i].width;
         textureDescs[i].height = m_textures[i].height;
-        textureDescs[i].pad = 0;
+        textureDescs[i].isSRGB = 0;  // 使用isSRGB而不是pad字段
     }
 
     // 上传纹理描述符数组
@@ -261,6 +261,16 @@ void TextureManager::freeDeviceBuffers() {
         CU_CHECK(cuMemFree(m_d_textures));
         m_d_textures = 0;
     }
+}
+
+// ==================== 结构体版本的方法实现 ====================
+
+uint32_t TextureManager::loadTexture2D(const TextureLoadSingleParams& params) {
+    return loadTexture2D(params.path, params.decodeSRGB);
+}
+
+std::vector<uint32_t> TextureManager::loadTextures(const TextureLoadBatchParams& params) {
+    return loadTextures(params.paths, params.decodeSRGB);
 }
 
 } // namespace optixw

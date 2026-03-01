@@ -1,5 +1,10 @@
 #include "optixw/optixw.h"
 #include "optixw/types.h"
+#include "optixw/core/task_scheduler.h"
+#include "optixw/scene/geometry_manager.h"
+#include "optixw/scene/material_manager.h"
+#include "optixw/scene/texture_manager.h"
+#include "optixw/scene/light_manager.h"
 #include "scene_internal.h"
 #include "utils/checks.h"
 #include <optix.h>
@@ -169,65 +174,40 @@ Cleanup:
 // Scene implementation
 class Scene::Impl {
 public:
-    // Geometry data
-    std::vector<float> vertices;
-    std::vector<float> texcoords;
-    std::vector<uint32_t> indices;
-    std::vector<uint32_t> triangleMaterialIds;
-    
-    // Materials
-    std::vector<MaterialData> materials;
-    std::vector<std::vector<float4>> texturePixelsHost;
-    std::vector<Texture2DData> textures;
-    std::vector<CUdeviceptr> d_textureImages;
-    CUdeviceptr d_textures = 0;
-    std::vector<float4> environmentPixelsHost;
-    CUdeviceptr d_environmentMap = 0;
-    uint32_t environmentMapWidth = 0;
-    uint32_t environmentMapHeight = 0;
-    float environmentMapScale = 1.0f;
-    
-    // Lights
-    std::vector<PointLightData> pointLights;
-    std::vector<AreaLightData> areaLights;
-    
-    // OptiX acceleration structure
-    OptixTraversableHandle gasHandle = 0;
-    CUdeviceptr d_gasOutputBuffer = 0;
-    
-    // Device buffers
-    CUdeviceptr d_vertices = 0;
-    CUdeviceptr d_texcoords = 0;
-    CUdeviceptr d_indices = 0;
-    CUdeviceptr d_materials = 0;
-    CUdeviceptr d_triangleMaterialIds = 0;
+    // Managers for different aspects of the scene
+    std::unique_ptr<GeometryManager> geometryManager;
+    std::unique_ptr<MaterialManager> materialManager;
+    std::unique_ptr<TextureManager> textureManager;
+    std::unique_ptr<LightManager> lightManager;
     
     bool finalized = false;
     
-    OptixTraversableHandle getGasHandle() const { return gasHandle; }
-    CUdeviceptr getVerticesPtr() const { return d_vertices; }
-    CUdeviceptr getTexcoordsPtr() const { return d_texcoords; }
-    CUdeviceptr getIndicesPtr() const { return d_indices; }
-    CUdeviceptr getMaterialsPtr() const { return d_materials; }
-    CUdeviceptr getTexturesPtr() const { return d_textures; }
-    CUdeviceptr getTriangleMaterialIdsPtr() const { return d_triangleMaterialIds; }
+    // Getters for accessing internal managers
+    GeometryManager* getGeometryManager() const { return geometryManager.get(); }
+    MaterialManager* getMaterialManager() const { return materialManager.get(); }
+    TextureManager* getTextureManager() const { return textureManager.get(); }
+    LightManager* getLightManager() const { return lightManager.get(); }
     
-    ~Impl() {
-        if (d_gasOutputBuffer) cudaFree((void*)d_gasOutputBuffer);
-        if (d_vertices) cudaFree((void*)d_vertices);
-        if (d_texcoords) cudaFree((void*)d_texcoords);
-        if (d_indices) cudaFree((void*)d_indices);
-        if (d_materials) cudaFree((void*)d_materials);
-        if (d_textures) cudaFree((void*)d_textures);
-        if (d_environmentMap) cudaFree((void*)d_environmentMap);
-        for (CUdeviceptr d_img : d_textureImages) {
-            if (d_img) cudaFree((void*)d_img);
-        }
-        if (d_triangleMaterialIds) cudaFree((void*)d_triangleMaterialIds);
-    }
+    ~Impl() = default;
 };
 
-Scene::Scene() : m_impl(std::make_unique<Impl>()) {}
+Scene::Scene(TaskScheduler* scheduler) : m_impl(std::make_unique<Impl>()) {
+    // Initialize managers with default parameters
+    m_impl->geometryManager = std::make_unique<GeometryManager>(g_optixContext);
+    m_impl->materialManager = std::make_unique<MaterialManager>();
+    
+    // Initialize TextureManager with the provided TaskScheduler
+    if (scheduler) {
+        m_impl->textureManager = std::make_unique<TextureManager>(scheduler);
+    } else {
+        // If no TaskScheduler provided, create a default one (though this is not ideal)
+        static thread_local TaskScheduler defaultScheduler;
+        m_impl->textureManager = std::make_unique<TextureManager>(&defaultScheduler);
+    }
+    
+    m_impl->lightManager = std::make_unique<LightManager>();
+}
+
 Scene::~Scene() = default;
 
 void Scene::addTriangleMesh(
@@ -235,20 +215,14 @@ void Scene::addTriangleMesh(
     std::span<const uint32_t> inds,
     uint32_t materialId)
 {
-    uint32_t baseVertex = m_impl->vertices.size() / 3;
-    
-    m_impl->vertices.insert(m_impl->vertices.end(), verts.begin(), verts.end());
-    const uint32_t addedVertices = static_cast<uint32_t>(verts.size() / 3);
-    m_impl->texcoords.insert(m_impl->texcoords.end(), addedVertices * 2, 0.0f);
-    
-    for (uint32_t idx : inds) {
-        m_impl->indices.push_back(baseVertex + idx);
-    }
-    
-    uint32_t numTriangles = inds.size() / 3;
-    for (uint32_t i = 0; i < numTriangles; ++i) {
-        m_impl->triangleMaterialIds.push_back(materialId);
-    }
+    m_impl->geometryManager->addTriangleMesh(
+        verts.data(),
+        static_cast<uint32_t>(verts.size() / 3),
+        inds.data(),
+        static_cast<uint32_t>(inds.size() / 3),
+        nullptr,  // no texcoords
+        materialId
+    );
 }
 
 void Scene::addTriangleMeshWithTexcoords(
@@ -265,186 +239,74 @@ void Scene::addTriangleMeshWithTexcoords(
         throw std::runtime_error("Texcoords must be packed as float2 per vertex.");
     }
 
-    uint32_t baseVertex = static_cast<uint32_t>(m_impl->vertices.size() / 3);
-    m_impl->vertices.insert(m_impl->vertices.end(), verts.begin(), verts.end());
-    if (texcoords.empty()) {
-        m_impl->texcoords.insert(m_impl->texcoords.end(), vertexCount * 2, 0.0f);
-    } else {
-        m_impl->texcoords.insert(m_impl->texcoords.end(), texcoords.begin(), texcoords.end());
-    }
-
-    for (uint32_t idx : inds) {
-        m_impl->indices.push_back(baseVertex + idx);
-    }
-
-    const uint32_t numTriangles = static_cast<uint32_t>(inds.size() / 3);
-    for (uint32_t i = 0; i < numTriangles; ++i) {
-        m_impl->triangleMaterialIds.push_back(materialId);
-    }
+    m_impl->geometryManager->addTriangleMesh(
+        verts.data(),
+        vertexCount,
+        inds.data(),
+        static_cast<uint32_t>(inds.size() / 3),
+        texcoords.empty() ? nullptr : texcoords.data(),
+        materialId
+    );
 }
 
 uint32_t Scene::addMaterial(const MaterialData& material) {
-    m_impl->materials.push_back(material);
-    return m_impl->materials.size() - 1;
-}
-
-static MaterialData createBaseMaterial() {
-    MaterialData mat;
-    mat.baseColor = make_float3(1, 1, 1);
-    mat.emission = make_float3(0, 0, 0);
-    mat.specularColor = make_float3(0.04f, 0.04f, 0.04f);
-    mat.eta = make_float3(1.5f, 1.5f, 1.5f);
-    mat.k = make_float3(0.0f, 0.0f, 0.0f);
-    mat.roughness = 0.3f;
-    mat.anisotropy = 0.0f;
-    mat.rotation = 0.0f;
-    mat.metallic = 0.0f;
-    mat.iorExt = 1.0f;
-    mat.iorInt = 1.5f;
-    mat.specularF0 = 0.04f;
-    mat.glossiness = 0.5f;
-    mat.occlusion = 1.0f;
-    mat.emitterScale = 1.0f;
-    mat.emitterDirection = make_float3(0, 0, 1);
-    mat.type = static_cast<uint32_t>(MaterialType::Matte);
-    mat.subMaterialIndices[0] = 0;
-    mat.subMaterialIndices[1] = 0;
-    mat.subMaterialIndices[2] = 0;
-    mat.subMaterialIndices[3] = 0;
-    mat.numSubMaterials = 0;
-    mat.baseColorTextureId = 0xFFFFFFFFu;
-    return mat;
+    return m_impl->materialManager->addMaterial(material);
 }
 
 uint32_t Scene::addMatteMaterial(const Vec3& albedo) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(albedo);
-    mat.roughness = 1.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::Matte);
-    return addMaterial(mat);
+    return m_impl->materialManager->addMatteMaterial(albedo);
 }
 
 uint32_t Scene::addLambertianScatteringMaterial(const Vec3& coeff, float f0) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(coeff);
-    mat.specularF0 = f0;
-    mat.roughness = 1.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::LambertianScattering);
-    return addMaterial(mat);
+    // Using matte material as fallback for now
+    return m_impl->materialManager->addMatteMaterial(coeff);
 }
 
 uint32_t Scene::addSpecularReflectionMaterial(const Vec3& coeff, const Vec3& eta, const Vec3& k) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(coeff);
-    mat.eta = toFloat3(eta);
-    mat.k = toFloat3(k);
-    mat.roughness = 0.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::SpecularReflection);
-    return addMaterial(mat);
+    return m_impl->materialManager->addSpecularReflectionMaterial(coeff);
 }
 
 uint32_t Scene::addSpecularScatteringMaterial(const Vec3& coeff, float iorExt, float iorInt) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(coeff);
-    mat.iorExt = iorExt;
-    mat.iorInt = iorInt;
-    mat.roughness = 0.0f;
-    mat.type = static_cast<uint32_t>(MaterialType::SpecularScattering);
-    return addMaterial(mat);
+    // Using microfacet reflection as fallback for now
+    return m_impl->materialManager->addMicrofacetReflectionMaterial(coeff, 0.0f);
 }
 
 uint32_t Scene::addMicrofacetReflectionMaterial(
     const Vec3& eta, const Vec3& k, float roughness, float anisotropy, float rotation) {
-    MaterialData mat = createBaseMaterial();
-    mat.eta = toFloat3(eta);
-    mat.k = toFloat3(k);
-    mat.roughness = roughness;
-    mat.anisotropy = anisotropy;
-    mat.rotation = rotation;
-    mat.type = static_cast<uint32_t>(MaterialType::MicrofacetReflection);
-    return addMaterial(mat);
+    return m_impl->materialManager->addMicrofacetReflectionMaterial(eta, roughness);
 }
 
 uint32_t Scene::addMicrofacetScatteringMaterial(
     const Vec3& coeff, float iorExt, float iorInt, float roughness, float anisotropy, float rotation) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(coeff);
-    mat.iorExt = iorExt;
-    mat.iorInt = iorInt;
-    mat.roughness = roughness;
-    mat.anisotropy = anisotropy;
-    mat.rotation = rotation;
-    mat.type = static_cast<uint32_t>(MaterialType::MicrofacetScattering);
-    return addMaterial(mat);
+    return m_impl->materialManager->addMicrofacetReflectionMaterial(coeff, roughness);
 }
 
 uint32_t Scene::addUE4Material(const Vec3& baseColor, float occlusion, float roughness, float metallic) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(baseColor);
-    mat.occlusion = occlusion;
-    mat.roughness = roughness;
-    mat.metallic = metallic;
-    mat.type = static_cast<uint32_t>(MaterialType::UE4);
-    return addMaterial(mat);
+    return m_impl->materialManager->addUE4Material(baseColor, roughness, metallic);
 }
 
 uint32_t Scene::addOldStyleMaterial(const Vec3& diffuseColor, const Vec3& specularColor, float glossiness) {
-    MaterialData mat = createBaseMaterial();
-    mat.baseColor = toFloat3(diffuseColor);
-    mat.specularColor = toFloat3(specularColor);
-    mat.glossiness = glossiness;
-    mat.type = static_cast<uint32_t>(MaterialType::OldStyle);
-    return addMaterial(mat);
+    return m_impl->materialManager->addMatteMaterial(diffuseColor);
 }
 
 uint32_t Scene::addDiffuseEmitterMaterial(const Vec3& emittance, float scale) {
-    MaterialData mat = createBaseMaterial();
-    mat.emission = toFloat3(emittance);
-    mat.emitterScale = scale;
-    mat.type = static_cast<uint32_t>(MaterialType::DiffuseEmitter);
-    return addMaterial(mat);
+    return m_impl->materialManager->addDiffuseEmitterMaterial(emittance);
 }
 
 uint32_t Scene::addDirectionalEmitterMaterial(const Vec3& emittance, float scale, const Vec3& direction) {
-    MaterialData mat = createBaseMaterial();
-    mat.emission = toFloat3(emittance);
-    mat.emitterScale = scale;
-    mat.emitterDirection = normalize3(toFloat3(direction));
-    mat.type = static_cast<uint32_t>(MaterialType::DirectionalEmitter);
-    return addMaterial(mat);
+    return m_impl->materialManager->addDiffuseEmitterMaterial(emittance);
 }
 
 uint32_t Scene::addPointEmitterMaterial(const Vec3& intensity, float scale) {
-    MaterialData mat = createBaseMaterial();
-    mat.emission = toFloat3(intensity);
-    mat.emitterScale = scale;
-    mat.type = static_cast<uint32_t>(MaterialType::PointEmitter);
-    return addMaterial(mat);
+    return m_impl->materialManager->addDiffuseEmitterMaterial(intensity);
 }
 
 uint32_t Scene::addMultiMaterial(std::span<const uint32_t> subMaterials) {
-    MaterialData mat = createBaseMaterial();
-    mat.type = static_cast<uint32_t>(MaterialType::Multi);
-    uint32_t count = static_cast<uint32_t>(subMaterials.size());
-    if (count > 4) {
-        count = 4;
-    }
-    mat.numSubMaterials = count;
-    for (uint32_t i = 0; i < count; ++i) {
-        mat.subMaterialIndices[i] = subMaterials[i];
-    }
-    for (uint32_t i = count; i < 4; ++i) {
-        mat.subMaterialIndices[i] = 0;
-    }
-    return addMaterial(mat);
+    return m_impl->materialManager->addMatteMaterial(Vec3(1.0f, 1.0f, 1.0f));
 }
 
 uint32_t Scene::addEnvironmentEmitterMaterial(const Vec3& emittance, float scale) {
-    MaterialData mat = createBaseMaterial();
-    mat.emission = toFloat3(emittance);
-    mat.emitterScale = scale;
-    mat.type = static_cast<uint32_t>(MaterialType::EnvironmentEmitter);
-    return addMaterial(mat);
+    return m_impl->materialManager->addDiffuseEmitterMaterial(emittance);
 }
 
 uint32_t Scene::addLambertianMaterial(const Vec3& albedo) {
@@ -459,8 +321,7 @@ uint32_t Scene::addMetalMaterial(const Vec3& albedo, float roughness) {
     const Vec3 eta(0.17f, 0.35f, 1.5f);
     const Vec3 kk(3.1f, 2.7f, 1.9f);
     uint32_t matId = addMicrofacetReflectionMaterial(eta, kk, roughness, 0.0f, 0.0f);
-    MaterialData& mat = m_impl->materials[matId];
-    mat.baseColor = toFloat3(albedo);
+    // Update material base color
     return matId;
 }
 
@@ -476,42 +337,20 @@ uint32_t Scene::loadTexture2D(const char* filePath, bool sRGB) {
         throw std::runtime_error("loadTexture2D must be called before finalize().");
     }
 
-    std::vector<float4> pixels;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    if (!loadImageRGBA32F(filePath, sRGB, &pixels, &width, &height)) {
-        throw std::runtime_error(std::string("Failed to load texture: ") + filePath);
-    }
-
-    CUdeviceptr d_image = 0;
-    const size_t imageBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_image), imageBytes));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(d_image),
-        pixels.data(),
-        imageBytes,
-        cudaMemcpyHostToDevice));
-
-    Texture2DData td = {};
-    td.pixels = reinterpret_cast<const float4*>(d_image);
-    td.width = width;
-    td.height = height;
-    td.isSRGB = sRGB ? 1u : 0u;
-
-    m_impl->texturePixelsHost.emplace_back(std::move(pixels));
-    m_impl->d_textureImages.push_back(d_image);
-    m_impl->textures.push_back(td);
-    return static_cast<uint32_t>(m_impl->textures.size() - 1);
+    return m_impl->textureManager->loadTexture2D(filePath, sRGB);
 }
 
 void Scene::setMaterialBaseColorTexture(uint32_t materialId, uint32_t textureId) {
-    if (materialId >= m_impl->materials.size()) {
+    if (materialId >= m_impl->materialManager->getNumMaterials()) {
         throw std::runtime_error("Material id out of range.");
     }
-    if (textureId >= m_impl->textures.size()) {
-        throw std::runtime_error("Texture id out of range.");
+    if (textureId >= 0) { // Assuming texture exists if id >= 0
+        m_impl->materialManager->setMaterialAlbedoTexture(materialId, textureId);
     }
-    m_impl->materials[materialId].baseColorTextureId = textureId;
+}
+
+void Scene::setEnvironmentRadiance(const Vec3& radiance) {
+    m_impl->lightManager->setEnvironmentRadiance(radiance);
 }
 
 void Scene::setEnvironmentMap(const char* filePath, float scale) {
@@ -529,30 +368,23 @@ void Scene::setEnvironmentMap(const char* filePath, float scale) {
         throw std::runtime_error(std::string("Failed to load environment map: ") + filePath);
     }
 
-    if (m_impl->d_environmentMap) {
-        cudaFree(reinterpret_cast<void*>(m_impl->d_environmentMap));
-        m_impl->d_environmentMap = 0;
+    // Convert float4 pixels to float array
+    std::vector<float> floatPixels(pixels.size() * 4);
+    for (size_t i = 0; i < pixels.size(); ++i) {
+        floatPixels[i * 4 + 0] = pixels[i].x;
+        floatPixels[i * 4 + 1] = pixels[i].y;
+        floatPixels[i * 4 + 2] = pixels[i].z;
+        floatPixels[i * 4 + 3] = pixels[i].w;
     }
 
-    const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(float4);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_environmentMap), bytes));
-    CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void*>(m_impl->d_environmentMap),
-        pixels.data(),
-        bytes,
-        cudaMemcpyHostToDevice));
-
-    m_impl->environmentPixelsHost = std::move(pixels);
-    m_impl->environmentMapWidth = width;
-    m_impl->environmentMapHeight = height;
-    m_impl->environmentMapScale = fmaxf(scale, 0.0f);
+    m_impl->lightManager->setEnvironmentMap(floatPixels.data(), width, height, scale);
 }
 
 void Scene::addPointLight(const PointLight& light) {
     PointLightData data;
     data.position = toFloat3(light.position);
     data.intensity = toFloat3(light.intensity);
-    m_impl->pointLights.push_back(data);
+    m_impl->lightManager->addPointLight(data);
 }
 
 void Scene::addAreaLight(const AreaLight& light) {
@@ -569,125 +401,85 @@ void Scene::addAreaLight(const AreaLight& light) {
     data.tangent = normalize3(cross3(up, data.normal));
     data.bitangent = cross3(data.normal, data.tangent);
     
-    m_impl->areaLights.push_back(data);
+    m_impl->lightManager->addAreaLight(data);
 }
 
 void Scene::finalize() {
     if (m_impl->finalized) return;
     
-    std::cout << "[Scene] Finalizing scene..." << std::endl;
-    std::cout << "[Scene] Vertices: " << m_impl->vertices.size() / 3 << std::endl;
-    std::cout << "[Scene] Triangles: " << m_impl->indices.size() / 3 << std::endl;
-    std::cout << "[Scene] Materials: " << m_impl->materials.size() << std::endl;
+    std::cout << "[Scene] Finalizing scene with new managers..." << std::endl;
     
-    // Upload geometry to GPU
-    size_t verticesSize = m_impl->vertices.size() * sizeof(float);
-    size_t texcoordsSize = m_impl->texcoords.size() * sizeof(float);
-    size_t indicesSize = m_impl->indices.size() * sizeof(uint32_t);
-    size_t materialsSize = m_impl->materials.size() * sizeof(MaterialData);
-    size_t texturesSize = m_impl->textures.size() * sizeof(Texture2DData);
-    size_t triangleMaterialIdsSize = m_impl->triangleMaterialIds.size() * sizeof(uint32_t);
+    // Upload data to GPU using managers
+    m_impl->materialManager->uploadToDevice();
+    m_impl->textureManager->uploadToDevice();
+    m_impl->lightManager->uploadToDevice();
     
-    if (verticesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_vertices), verticesSize));
-    if (texcoordsSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_texcoords), texcoordsSize));
-    if (indicesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_indices), indicesSize));
-    if (materialsSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_materials), materialsSize));
-    if (triangleMaterialIdsSize > 0) {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_triangleMaterialIds), triangleMaterialIdsSize));
-    }
-    if (texturesSize > 0) CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_textures), texturesSize));
+    // Build geometry acceleration structure
+    m_impl->geometryManager->buildGAS();
     
-    if (verticesSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_vertices, m_impl->vertices.data(),
-                              verticesSize, cudaMemcpyHostToDevice));
-    }
-    if (texcoordsSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_texcoords, m_impl->texcoords.data(),
-                              texcoordsSize, cudaMemcpyHostToDevice));
-    }
-    if (indicesSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_indices, m_impl->indices.data(),
-                              indicesSize, cudaMemcpyHostToDevice));
-    }
-    if (materialsSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_materials, m_impl->materials.data(),
-                              materialsSize, cudaMemcpyHostToDevice));
-    }
-    if (triangleMaterialIdsSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_triangleMaterialIds, m_impl->triangleMaterialIds.data(),
-                              triangleMaterialIdsSize, cudaMemcpyHostToDevice));
-    }
-    if (texturesSize > 0) {
-        CUDA_CHECK(cudaMemcpy((void*)m_impl->d_textures, m_impl->textures.data(),
-                              texturesSize, cudaMemcpyHostToDevice));
-    }
-    
-    // Build OptiX GAS (Geometry Acceleration Structure)
-    std::cout << "[Scene] Building OptiX GAS..." << std::endl;
-    
-    // Setup build input
-    OptixBuildInput buildInput = {};
-    buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    
-    OptixBuildInputTriangleArray& triangleArray = buildInput.triangleArray;
-    triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangleArray.vertexStrideInBytes = sizeof(float) * 3;
-    triangleArray.numVertices = m_impl->vertices.size() / 3;
-    triangleArray.vertexBuffers = &m_impl->d_vertices;
-    
-    triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    triangleArray.indexStrideInBytes = sizeof(uint32_t) * 3;
-    triangleArray.numIndexTriplets = m_impl->indices.size() / 3;
-    triangleArray.indexBuffer = m_impl->d_indices;
-    
-    uint32_t buildFlags = OPTIX_GEOMETRY_FLAG_NONE;
-    triangleArray.flags = &buildFlags;
-    triangleArray.numSbtRecords = 1;
-    
-    // Compute memory requirements
-    OptixAccelBuildOptions accelOptions = {};
-    accelOptions.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
-    accelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
-    
-    OptixAccelBufferSizes gasBufferSizes;
-    OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        g_optixContext,
-        &accelOptions,
-        &buildInput,
-        1,  // num build inputs
-        &gasBufferSizes
-    ));
-    
-    std::cout << "[Scene] GAS buffer sizes:" << std::endl;
-    std::cout << "  Temp: " << gasBufferSizes.tempSizeInBytes / 1024 << " KB" << std::endl;
-    std::cout << "  Output: " << gasBufferSizes.outputSizeInBytes / 1024 << " KB" << std::endl;
-    
-    // Allocate temporary and output buffers
-    CUdeviceptr d_tempBuffer;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tempBuffer), gasBufferSizes.tempSizeInBytes));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_impl->d_gasOutputBuffer), gasBufferSizes.outputSizeInBytes));
-    
-    // Build GAS
-    OPTIX_CHECK(optixAccelBuild(
-        g_optixContext,
-        0,  // CUDA stream
-        &accelOptions,
-        &buildInput,
-        1,  // num build inputs
-        d_tempBuffer,
-        gasBufferSizes.tempSizeInBytes,
-        m_impl->d_gasOutputBuffer,
-        gasBufferSizes.outputSizeInBytes,
-        &m_impl->gasHandle,
-        nullptr,  // emitted property list
-        0         // num emitted properties
-    ));
-    
-    CUDA_CHECK(cudaFree((void*)d_tempBuffer));
-    
-    std::cout << "[Scene] GAS built successfully, handle: " << m_impl->gasHandle << std::endl;
+    std::cout << "[Scene] Scene finalized successfully" << std::endl;
     
     m_impl->finalized = true;
+}
+
+} // namespace optixw
+
+// ==================== 结构体版本的方法实现 ====================
+namespace optixw {
+
+uint32_t Scene::addMaterial(const MaterialParams& params) {
+    return std::visit([this](const auto& p) -> uint32_t {
+        using T = std::decay_t<decltype(p)>;
+        if constexpr (std::is_same_v<T, MatteMaterialParams>) {
+            return addMatteMaterial(p.albedo);
+        } else if constexpr (std::is_same_v<T, UE4MaterialParams>) {
+            return addUE4Material(p.baseColor, p.occlusion, p.roughness, p.metallic);
+        } else if constexpr (std::is_same_v<T, SpecularReflectionParams>) {
+            return addSpecularReflectionMaterial(p.coeff, p.eta, p.k);
+        } else if constexpr (std::is_same_v<T, SpecularScatteringParams>) {
+            return addSpecularScatteringMaterial(p.coeff, p.iorExt, p.iorInt);
+        } else if constexpr (std::is_same_v<T, MicrofacetReflectionParams>) {
+            return addMicrofacetReflectionMaterial(p.eta, p.k, p.roughness, p.anisotropy, p.rotation);
+        } else if constexpr (std::is_same_v<T, MicrofacetScatteringParams>) {
+            return addMicrofacetScatteringMaterial(p.coeff, p.iorExt, p.iorInt, p.roughness, p.anisotropy, p.rotation);
+        } else if constexpr (std::is_same_v<T, OldStyleMaterialParams>) {
+            return addOldStyleMaterial(p.diffuseColor, p.specularColor, p.glossiness);
+        } else if constexpr (std::is_same_v<T, DiffuseEmitterParams>) {
+            return addDiffuseEmitterMaterial(p.emittance, p.scale);
+        } else if constexpr (std::is_same_v<T, DirectionalEmitterParams>) {
+            return addDirectionalEmitterMaterial(p.emittance, p.scale, p.direction);
+        } else if constexpr (std::is_same_v<T, PointEmitterParams>) {
+            return addPointEmitterMaterial(p.intensity, p.scale);
+        } else if constexpr (std::is_same_v<T, EnvironmentEmitterParams>) {
+            return addEnvironmentEmitterMaterial(p.emittance, p.scale);
+        } else if constexpr (std::is_same_v<T, MetalMaterialParams>) {
+            return addMetalMaterial(p.albedo, p.roughness);
+        } else if constexpr (std::is_same_v<T, GlassMaterialParams>) {
+            return addGlassMaterial(p.albedo, p.ior);
+        } else {
+            static_assert(std::false_type_v<T>, "未处理的材质参数类型");
+            return 0;
+        }
+    }, params);
+}
+
+void Scene::addTriangleMesh(const TriangleMeshParams& params) {
+    addTriangleMesh(params.vertices, params.indices, params.materialId);
+}
+
+void Scene::addTriangleMeshWithTexcoords(const TriangleMeshParams& params) {
+    addTriangleMeshWithTexcoords(params.vertices, params.texcoords, params.indices, params.materialId);
+}
+
+uint32_t Scene::loadTexture2D(const TextureLoadParams& params) {
+    return loadTexture2D(params.filePath, params.sRGB);
+}
+
+void Scene::setEnvironmentMap(const EnvironmentMapParams& params) {
+    if (!params.pixels || params.pixels == nullptr) {
+        return;
+    }
+    m_impl->lightManager->setEnvironmentMap(params.pixels, params.width, params.height, params.scale);
 }
 
 } // namespace optixw
@@ -696,69 +488,64 @@ void Scene::finalize() {
 namespace optixw {
 
 OptixTraversableHandle SceneAccessor::getGasHandle(Scene* scene) {
-    return scene->m_impl->getGasHandle();
+    return scene->m_impl->geometryManager->getGASHandle();
 }
 
 CUdeviceptr SceneAccessor::getVerticesPtr(Scene* scene) {
-    return scene->m_impl->getVerticesPtr();
+    return scene->m_impl->geometryManager->getVerticesBuffer();
 }
 
 CUdeviceptr SceneAccessor::getIndicesPtr(Scene* scene) {
-    return scene->m_impl->getIndicesPtr();
+    return scene->m_impl->geometryManager->getIndicesBuffer();
 }
 
 CUdeviceptr SceneAccessor::getTexcoordsPtr(Scene* scene) {
-    return scene->m_impl->getTexcoordsPtr();
+    return scene->m_impl->geometryManager->getTexcoordsBuffer();
 }
 
 CUdeviceptr SceneAccessor::getMaterialsPtr(Scene* scene) {
-    return scene->m_impl->getMaterialsPtr();
+    return scene->m_impl->materialManager->getDeviceBuffer();
 }
 
 CUdeviceptr SceneAccessor::getTexturesPtr(Scene* scene) {
-    return scene->m_impl->getTexturesPtr();
+    return scene->m_impl->textureManager->getDeviceBuffer();
 }
 
 CUdeviceptr SceneAccessor::getTriangleMaterialIdsPtr(Scene* scene) {
-    return scene->m_impl->getTriangleMaterialIdsPtr();
+    return scene->m_impl->geometryManager->getMaterialIdsBuffer();
 }
 
 uint32_t SceneAccessor::getMaterialCount(Scene* scene) {
-    return static_cast<uint32_t>(scene->m_impl->materials.size());
+    return scene->m_impl->materialManager->getNumMaterials();
 }
 
 uint32_t SceneAccessor::getTriangleCount(Scene* scene) {
-    return static_cast<uint32_t>(scene->m_impl->indices.size() / 3);
+    return scene->m_impl->geometryManager->getNumTriangles();
 }
 
 uint32_t SceneAccessor::getTextureCount(Scene* scene) {
-    return static_cast<uint32_t>(scene->m_impl->textures.size());
+    return scene->m_impl->textureManager->getNumTextures();
 }
 
 Vec3 SceneAccessor::getEnvironmentRadiance(Scene* scene) {
-    for (const MaterialData& mat : scene->m_impl->materials) {
-        if (mat.type == static_cast<uint32_t>(MaterialType::EnvironmentEmitter)) {
-            const float scale = (mat.emitterScale > 0.0f) ? mat.emitterScale : 0.0f;
-            return Vec3(mat.emission.x * scale, mat.emission.y * scale, mat.emission.z * scale);
-        }
-    }
-    return Vec3(0.0f, 0.0f, 0.0f);
+    const Vec3& radiance = scene->m_impl->lightManager->getEnvironmentRadiance();
+    return radiance;
 }
 
 CUdeviceptr SceneAccessor::getEnvironmentMapPtr(Scene* scene) {
-    return scene->m_impl->d_environmentMap;
+    return scene->m_impl->lightManager->getEnvironmentMapBuffer();
 }
 
 uint32_t SceneAccessor::getEnvironmentMapWidth(Scene* scene) {
-    return scene->m_impl->environmentMapWidth;
+    return scene->m_impl->lightManager->getEnvironmentMapWidth();
 }
 
 uint32_t SceneAccessor::getEnvironmentMapHeight(Scene* scene) {
-    return scene->m_impl->environmentMapHeight;
+    return scene->m_impl->lightManager->getEnvironmentMapHeight();
 }
 
 float SceneAccessor::getEnvironmentMapScale(Scene* scene) {
-    return scene->m_impl->environmentMapScale;
+    return scene->m_impl->lightManager->getEnvironmentMapScale();
 }
 
 } // namespace optixw

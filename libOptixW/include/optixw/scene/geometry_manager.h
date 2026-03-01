@@ -49,6 +49,9 @@ public:
     uint32_t getNumTriangles() const { return m_numTriangles; }
     uint32_t getNumVertices() const { return m_numVertices; }
     bool isBuilt() const { return m_built; }
+    
+    // 新增结构体版本
+    void addTriangleMesh(const TriangleMeshParams& params);
 
     // 清空几何数据
     void clear();

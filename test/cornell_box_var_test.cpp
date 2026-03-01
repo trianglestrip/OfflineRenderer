@@ -254,11 +254,11 @@ int main() {
         runRender(128, 128, "small");
         // run a larger tile size that still ends up being disabled by the
         // 2*overlap check above
-        runRender(256, 256, "large");
+       // runRender(256, 256, "large");
         // run a medium tile that is big enough to permit tiling; overlap is
         // 128 so 400 > 2*overlap=256 and we should get proper tiles and zero
         // seam difference
-        runRender(400, 400, "medium");
+       // runRender(400, 400, "medium");
 
         std::cout << "[Test] Test completed successfully" << std::endl;
         

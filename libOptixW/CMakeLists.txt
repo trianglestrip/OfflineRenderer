@@ -95,15 +95,38 @@ add_library(${TARGET_NAME} STATIC
 )
 
 # Include directories
+set(INCLUDE_DIRECTORIES
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OptiX_INSTALL_DIR}/include
+    ${CUDAToolkit_INCLUDE_DIRS}
+    "${CMAKE_SOURCE_DIR}/ext/taskflow"
+)
+
+message(STATUS "Include directories: ${INCLUDE_DIRECTORIES}")
+
 target_include_directories(${TARGET_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${OptiX_INSTALL_DIR}/include
-        ${CUDAToolkit_INCLUDE_DIRS}
+        ${INCLUDE_DIRECTORIES}
 )
+
+# Find and link Taskflow
+find_package(Taskflow QUIET)
+if(NOT Taskflow_FOUND)
+    # 如果找不到预安装的Taskflow，则手动指定路径
+    message(STATUS "Taskflow not found via find_package, using ext/taskflow")
+    # 添加Taskflow的头文件路径
+    list(APPEND INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/ext/taskflow")
+    # 不在target_link_libraries中添加Taskflow，因为它是头文件库
+else()
+    message(STATUS "Found Taskflow: ${Taskflow_VERSION}")
+    # 添加Taskflow的头文件路径
+    list(APPEND INCLUDE_DIRECTORIES ${Taskflow_INCLUDE_DIRS})
+endif()
 
 # Link libraries
 target_link_libraries(${TARGET_NAME}
@@ -112,7 +135,7 @@ target_link_libraries(${TARGET_NAME}
         CUDA::cuda_driver
         windowscodecs
         ole32
-        Taskflow  # 添加 Taskflow 依赖
+        # Taskflow is header-only, so we don't need to link it
 )
 
 # C++20 standard

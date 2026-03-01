@@ -116,4 +116,190 @@ struct WavefrontQueues {
     uint32_t capacity;
 };
 
+// ==================== 材质参数结构体 ====================
+struct MatteMaterialParams {
+    Vec3 albedo;
+};
+
+struct UE4MaterialParams {
+    Vec3 baseColor;
+    float occlusion;
+    float roughness;
+    float metallic;
+};
+
+struct SpecularReflectionParams {
+    Vec3 coeff;
+    Vec3 eta;
+    Vec3 k;
+};
+
+struct SpecularScatteringParams {
+    Vec3 coeff;
+    float iorExt;
+    float iorInt;
+};
+
+struct MicrofacetReflectionParams {
+    Vec3 eta;
+    Vec3 k;
+    float roughness;
+    float anisotropy = 0.0f;
+    float rotation = 0.0f;
+};
+
+struct MicrofacetScatteringParams {
+    Vec3 coeff;
+    float iorExt;
+    float iorInt;
+    float roughness;
+    float anisotropy = 0.0f;
+    float rotation = 0.0f;
+};
+
+struct OldStyleMaterialParams {
+    Vec3 diffuseColor;
+    Vec3 specularColor;
+    float glossiness;
+};
+
+struct DiffuseEmitterParams {
+    Vec3 emittance;
+    float scale = 1.0f;
+};
+
+struct DirectionalEmitterParams {
+    Vec3 emittance;
+    float scale;
+    Vec3 direction;
+};
+
+struct PointEmitterParams {
+    Vec3 intensity;
+    float scale = 1.0f;
+};
+
+struct EnvironmentEmitterParams {
+    Vec3 emittance;
+    float scale = 1.0f;
+};
+
+struct MetalMaterialParams {
+    Vec3 albedo;
+    float roughness;
+};
+
+struct GlassMaterialParams {
+    Vec3 albedo;
+    float ior;
+};
+
+// ==================== 材质参数变体 ====================
+using MaterialParams = std::variant<
+    MatteMaterialParams,
+    UE4MaterialParams,
+    SpecularReflectionParams,
+    SpecularScatteringParams,
+    MicrofacetReflectionParams,
+    MicrofacetScatteringParams,
+    OldStyleMaterialParams,
+    DiffuseEmitterParams,
+    DirectionalEmitterParams,
+    PointEmitterParams,
+    EnvironmentEmitterParams,
+    MetalMaterialParams,
+    GlassMaterialParams
+>;
+
+// ==================== 其他参数结构体 ====================
+struct TriangleMeshParams {
+    std::span<const float> vertices;
+    std::span<const float> texcoords;
+    std::span<const uint32_t> indices;
+    uint32_t materialId;
+    
+    TriangleMeshParams() : materialId(0) {}
+};
+
+struct EnvironmentMapParams {
+    const float* pixels;
+    uint32_t width;
+    uint32_t height;
+    float scale = 1.0f;
+    
+    EnvironmentMapParams() : pixels(nullptr), width(0), height(0), scale(1.0f) {}
+};
+
+struct TextureLoadParams {
+    const char* filePath;
+    bool sRGB = true;
+    
+    TextureLoadParams() : filePath(nullptr), sRGB(true) {}
+};
+
+struct RenderConfig {
+    uint32_t spp;
+    bool enableDenoiser;
+    float denoiserBlend;
+    bool enableTiling;
+    uint32_t tileWidth;
+    uint32_t tileHeight;
+    
+    RenderConfig() 
+        : spp(1), enableDenoiser(false), denoiserBlend(0.0f),
+          enableTiling(false), tileWidth(0), tileHeight(0) {}
+};
+
+// ==================== 降噪器参数结构体 ====================
+struct DenoiserSetupParams {
+    uint32_t width;
+    uint32_t height;
+    bool useAlbedo = true;
+    bool useNormal = true;
+    
+    DenoiserSetupParams() : width(0), height(0), useAlbedo(true), useNormal(true) {}
+};
+
+struct DenoiserParams {
+    CUdeviceptr inputColor;
+    CUdeviceptr inputAlbedo;
+    CUdeviceptr inputNormal;
+    CUdeviceptr output;
+    CUstream stream = 0;
+    
+    DenoiserParams() : inputColor(0), inputAlbedo(0), inputNormal(0), output(0), stream(0) {}
+};
+
+struct DenoiserTiledParams {
+    CUdeviceptr inputColor;
+    CUdeviceptr inputAlbedo;
+    CUdeviceptr inputNormal;
+    CUdeviceptr output;
+    uint32_t tileWidth;
+    uint32_t tileHeight;
+    uint32_t overlap;
+    CUstream stream = 0;
+    
+    DenoiserTiledParams() 
+        : inputColor(0), inputAlbedo(0), inputNormal(0), output(0),
+          tileWidth(0), tileHeight(0), overlap(0), stream(0) {}
+};
+
+// ==================== 纹理加载参数结构体 ====================
+struct TextureLoadSingleParams {
+    std::string path;
+    bool decodeSRGB = true;
+    
+    TextureLoadSingleParams() : decodeSRGB(true) {}
+    TextureLoadSingleParams(const std::string& p, bool sRGB = true) 
+        : path(p), decodeSRGB(sRGB) {}
+};
+
+struct TextureLoadBatchParams {
+    std::vector<std::string> paths;
+    bool decodeSRGB = true;
+    
+    TextureLoadBatchParams() : decodeSRGB(true) {}
+};
+
 } // namespace optixw

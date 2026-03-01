@@ -65,6 +65,17 @@ void GeometryManager::addTriangleMesh(
     m_numTriangles += numTriangles;
 }
 
+void GeometryManager::addTriangleMesh(const TriangleMeshParams& params) {
+    addTriangleMesh(
+        params.vertices.data(),
+        static_cast<uint32_t>(params.vertices.size() / 3),
+        params.indices.data(),
+        static_cast<uint32_t>(params.indices.size() / 3),
+        params.texcoords.empty() ? nullptr : params.texcoords.data(),
+        params.materialId
+    );
+}
+
 void GeometryManager::buildGAS() {
     if (m_built) {
         std::cout << "[GeometryManager] GAS 已构建，跳过" << std::endl;

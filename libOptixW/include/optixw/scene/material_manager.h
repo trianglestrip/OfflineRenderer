@@ -21,6 +21,9 @@ public:
     MaterialManager();
     ~MaterialManager();
 
+    // 添加材质（直接添加MaterialData）
+    uint32_t addMaterial(const MaterialData& material);
+
     // 添加 Matte 材质（漫反射）
     uint32_t addMatteMaterial(const Vec3& albedo);
 
@@ -63,7 +66,7 @@ private:
     CUdeviceptr m_d_materials;
 
     // 内部方法
-    uint32_t addMaterial(const MaterialData& mat);
+    uint32_t addMaterialInternal(const MaterialData& mat);
     void freeDeviceBuffer();
 
     // 禁止拷贝和赋值
