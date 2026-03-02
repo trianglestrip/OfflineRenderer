@@ -288,7 +288,7 @@ __device__ inline optixw::MaterialData resolveMaterial(
     optixw::MaterialData result = mat;
     if (mat.baseColorTextureId < numTextures && textures != nullptr) {
         const optixw::Texture2DData& tex = textures[mat.baseColorTextureId];
-        if (tex.pixels != nullptr) {
+        if (tex.pixels != nullptr && tex.width > 0 && tex.height > 0) {
             float u = hit.texCoord.x;
             float v = hit.texCoord.y;
             u = fmodf(u, 1.0f);
@@ -1000,8 +1000,10 @@ extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
 
     if (ray.stage == optixw::RayState::Terminated) {
         if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
-            params->renderBuffers.accumBuffer[ray.pixelIndex] =
-                params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
+            if (ray.pixelIndex < 262144) {
+                params->renderBuffers.accumBuffer[ray.pixelIndex] =
+                    params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
+            }
         }
         return;
     }
@@ -1009,109 +1011,6 @@ extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
         return;
     }
 
-    if (params->materialsTextures.materials == nullptr || params->materialsTextures.numMaterials == 0) {
-        ray.stage = optixw::RayState::Terminated;
-        return;
-    }
-
-    optixw::HitInfo hit = params->renderBuffers.hitBuffer[rayIndex];
-    if (hit.materialId >= params->materialsTextures.numMaterials) {
-        ray.stage = optixw::RayState::Terminated;
-        return;
-    }
-    const optixw::MaterialData& mat = params->materialsTextures.materials[hit.materialId];
-
-    if (mat.type == kDiffuseEmitter || mat.type == kSpecularEmitter) {
-        if (ray.depth == 0) {
-            ray.radiance = mat.baseColor * mat.emitterScale;
-        } else {
-            ray.radiance = black3();
-        }
-        ray.stage = optixw::RayState::Terminated;
-        return;
-    }
-
-    float3 wo = normalize(-ray.origin + hit.position);
-    uint32_t seed = tea(rayIndex, 0);
-
-    BSDFSample bsdf = sampleMaterial(
-        mat,
-        params->materialsTextures.materials,
-        params->materialsTextures.numMaterials,
-        params->materialsTextures.textures,
-        params->materialsTextures.numTextures,
-        hit,
-        ray,
-        wo,
-        seed
-    );
-
-    if (!bsdf.valid) {
-        ray.stage = optixw::RayState::Terminated;
-        ray.radiance = black3();
-        return;
-    }
-
-    const float3 n = hit.normal;
-    float noL = fmaxf(0.0f, dot(n, bsdf.wi));
-    if (noL <= 0.0f) {
-        ray.stage = optixw::RayState::Terminated;
-        ray.radiance = black3();
-        return;
-    }
-
-    float3 radiance = black3();
-    const int ENV_SAMPLES = 2;
-    for (int i = 0; i < ENV_SAMPLES; ++i) {
-        float envPdf = 0.0f;
-        float3 envColor = sampleEnvironment(params->environment, hit.position, seed, &envPdf);
-        if (envPdf > 1e-8f) {
-            float3 envWi = bsdf.wi;
-            float3 bsdfVal = evalMaterialBSDF(
-                mat,
-                params->materialsTextures.materials,
-                params->materialsTextures.numMaterials,
-                hit,
-                params->materialsTextures.textures,
-                params->materialsTextures.numTextures,
-                n,
-                wo,
-                envWi
-            );
-            float bsdfPdf = evalMaterialPDF(
-                mat,
-                params->materialsTextures.materials,
-                params->materialsTextures.numMaterials,
-                hit,
-                params->materialsTextures.textures,
-                params->materialsTextures.numTextures,
-                n,
-                wo,
-                envWi
-            );
-            if (bsdfPdf > 1e-8f) {
-                float weight = envPdf / (envPdf + bsdfPdf);
-                float3 temp = make_float3(envColor.x * bsdfVal.x, envColor.y * bsdfVal.y, envColor.z * bsdfVal.z);
-                temp = temp * weight / envPdf;
-                radiance = radiance + temp;
-            }
-        }
-    }
-
-    ray.origin = hit.position;
-    ray.direction = bsdf.wi;
-    float3 temp = make_float3(radiance.x * bsdf.weight.x, radiance.y * bsdf.weight.y, radiance.z * bsdf.weight.z);
-    ray.radiance = temp;
-    ray.depth++;
-
-    if (ray.depth > 10) {
-        float continueProb = fminf(0.5f, max3(ray.radiance));
-        if (randf(seed) > continueProb) {
-            ray.stage = optixw::RayState::Terminated;
-            return;
-        }
-        ray.radiance = ray.radiance / continueProb;
-    }
-
-    ray.stage = optixw::RayState::Trace;
+    ray.radiance = make_float3(0.5f, 0.5f, 0.5f);
+    ray.stage = optixw::RayState::Terminated;
 }

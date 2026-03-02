@@ -231,8 +231,8 @@ void Impl::renderSample(
         ));
 
         CUdeviceptr temp = activeIn;
-    activeIn = activeOut;
-    activeOut = temp;
+        activeIn = activeOut;
+        activeOut = temp;
 }
 
 // After all iterations, make sure all terminated rays have their radiance accumulated
