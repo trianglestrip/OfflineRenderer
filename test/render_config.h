@@ -177,7 +177,7 @@ inline RenderConfig load(const std::string& sectionName, const RenderConfig& def
             config.spp = parsed;
         } else if (key == "denoiser") {
             config.denoiser = (parsed != 0);
-        } else if (key == "denoiserblend") {
+        } else if (key == "denoiserblend" || key == "blend") {
             float f;
             if (parseFloat(value, &f)) {
                 config.denoiserBlend = f;

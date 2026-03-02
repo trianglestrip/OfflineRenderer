@@ -12,22 +12,55 @@
 
 using namespace optixw;
 
-// Save image as PNG with gamma correction
+// ACES Filmic Tone Mapping (industry standard for HDR to LDR conversion)
+inline float acesToneMap(float x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return std::clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
+}
+
+// Save image as PNG with tone mapping and gamma correction
 void savePNG(const char* filename, const Vec3* image, uint32_t width, uint32_t height) {
     std::vector<uint8_t> pixels(width * height * 3);
     
-    // Debug: check first few pixels
-    float maxVal = 0.0f;
-    for (uint32_t i = 0; i < std::min(10u, width * height); ++i) {
-        maxVal = std::max(maxVal, std::max(image[i].x, std::max(image[i].y, image[i].z)));
+    // Calculate luminance for each pixel and find a good exposure
+    std::vector<float> luminances(width * height);
+    for (uint32_t i = 0; i < width * height; ++i) {
+        luminances[i] = 0.2126f * image[i].x + 0.7152f * image[i].y + 0.0722f * image[i].z;
     }
-    std::cout << "[Debug] First 10 pixels max value: " << maxVal << std::endl;
+    
+    // Sort to find 95th percentile (ignore extreme highlights)
+    std::sort(luminances.begin(), luminances.end());
+    float percentile95 = luminances[static_cast<size_t>(width * height * 0.95)];
+    
+    std::cout << "[Debug] 95th percentile luminance: " << percentile95 << std::endl;
+    
+    // Exposure based on 95th percentile - target it to map to ~1.0 before tone mapping
+    float exposure = 1.0f;
+    if (percentile95 > 0.001f) {
+        exposure = 1.0f / percentile95;
+    }
+    std::cout << "[Debug] Exposure: " << exposure << std::endl;
     
     for (uint32_t i = 0; i < width * height; ++i) {
+        // Apply exposure
+        float r = image[i].x * exposure;
+        float g = image[i].y * exposure;
+        float b = image[i].z * exposure;
+        
+        // Apply ACES tone mapping
+        r = acesToneMap(r);
+        g = acesToneMap(g);
+        b = acesToneMap(b);
+        
+        // Apply gamma correction
         float gamma = 1.0f / 2.2f;
-        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].x, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(std::clamp(image[i].y, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(std::clamp(image[i].z, 0.0f, 1.0f), gamma) * 255);
+        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(r, gamma) * 255);
+        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(g, gamma) * 255);
+        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(b, gamma) * 255);
     }
     
     stbi_write_png(filename, width, height, 3, pixels.data(), width * 3);

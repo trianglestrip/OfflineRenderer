@@ -109,7 +109,7 @@ std::vector<char> loadPTX(const char* filename) {
 
 Impl::Impl()
     : traceModule(nullptr), pipeline(nullptr), sbt(),
-      numPixels(0), maxRays(0), environmentRadiance(make_float3(0.0f,0.0f,0.0f)),
+      numPixels(0), maxRays(0),
       pipelineCreated(false),
       scheduler(nullptr)
 {
@@ -124,7 +124,7 @@ Impl::~Impl() {
     sbtRecords.free();
     
     wavefrontBuffers.free();
-    accumBuffers.free();
+    accumulationBuffers.free();
     mergeBuffers.free();
     launchParamsBuffer.free();
     denoiser.destroy();
@@ -148,7 +148,7 @@ void Impl::allocateBuffers(uint32_t width, uint32_t height) {
     std::cout << "[Renderer] allocateBuffers: malloc accumBuffer " << accumSize << std::endl;
     std::cout << "[Renderer] allocateBuffers: malloc albedoBuffer " << accumSize << std::endl;
     std::cout << "[Renderer] allocateBuffers: malloc normalBuffer " << accumSize << std::endl;
-    accumBuffers.allocate(accumSize);
+    accumulationBuffers.allocate(accumSize);
     
     std::cout << "[Renderer] allocateBuffers: malloc mergeAccum " << accumSize << std::endl;
     std::cout << "[Renderer] allocateBuffers: malloc mergeWeight " << weightSize << std::endl;
@@ -162,9 +162,9 @@ void Impl::allocateBuffers(uint32_t width, uint32_t height) {
     // Initialize buffers to deterministic values
     CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_rayPool, 0, rayPoolSize));
     CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_hitBuffer, 0, hitBufferSize));
-    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_accumBuffer, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_albedoBuffer, 0, accumSize));
-    CUDA_CHECK(cudaMemset((void*)accumBuffers.d_normalBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)accumulationBuffers.d_accumBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)accumulationBuffers.d_albedoBuffer, 0, accumSize));
+    CUDA_CHECK(cudaMemset((void*)accumulationBuffers.d_normalBuffer, 0, accumSize));
     CUDA_CHECK(cudaMemset((void*)mergeBuffers.d_mergeAccum, 0, accumSize));
     CUDA_CHECK(cudaMemset((void*)mergeBuffers.d_mergeWeight, 0, weightSize));
     CUDA_CHECK(cudaMemset((void*)wavefrontBuffers.d_compactCounter, 0, sizeof(uint32_t)));
@@ -293,11 +293,11 @@ void Renderer::render(
     m_impl->materialTextureBuffers.numTextures = SceneAccessor::getTextureCount(scene);
     m_impl->materialTextureBuffers.numTriangles = SceneAccessor::getTriangleCount(scene);
     const Vec3 env = SceneAccessor::getEnvironmentRadiance(scene);
-    m_impl->environmentRadiance = toFloat3(env);
-    m_impl->environmentMap.d_map = SceneAccessor::getEnvironmentMapPtr(scene);
-    m_impl->environmentMap.width = SceneAccessor::getEnvironmentMapWidth(scene);
-    m_impl->environmentMap.height = SceneAccessor::getEnvironmentMapHeight(scene);
-    m_impl->environmentMap.scale = SceneAccessor::getEnvironmentMapScale(scene);
+    m_impl->environmentData.radiance = toFloat3(env);
+    m_impl->environmentData.map.d_map = SceneAccessor::getEnvironmentMapPtr(scene);
+    m_impl->environmentData.map.width = SceneAccessor::getEnvironmentMapWidth(scene);
+    m_impl->environmentData.map.height = SceneAccessor::getEnvironmentMapHeight(scene);
+    m_impl->environmentData.map.scale = SceneAccessor::getEnvironmentMapScale(scene);
     
     // Get light data
     m_impl->lightBuffers.d_pointLights = SceneAccessor::getPointLightsPtr(scene);
@@ -307,64 +307,48 @@ void Renderer::render(
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
     
-    // Render samples using Taskflow for parallelization if we have a scheduler
-    if (spp > 1 && m_impl->scheduler != nullptr) {
-        // Use Taskflow to parallelize sample rendering
-        tf::Taskflow taskflow;
+    // Fall back to serial rendering to avoid concurrent access issues
+    for (uint32_t sample = 0; sample < spp; ++sample) {
+        std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
         
-        // Split samples into chunks for parallel processing
-        const uint32_t samplesPerChunk = std::max(1u, spp / std::min(spp, 4u)); // At most 4 chunks or 1 sample per chunk
-        
-        for (uint32_t chunkStart = 0; chunkStart < spp; chunkStart += samplesPerChunk) {
-            uint32_t chunkEnd = std::min(chunkStart + samplesPerChunk, spp);
-            
-            taskflow.emplace([this, gasHandle, d_vertices, d_texcoords, d_indices, d_triangleMaterialIds, 
-                             &camData, width, height, chunkStart, chunkEnd]() {
-                for (uint32_t sample = chunkStart; sample < chunkEnd; ++sample) {
-                    m_impl->renderSample(
-                        gasHandle,
-                        d_vertices,
-                        d_texcoords,
-                        d_indices,
-                        d_triangleMaterialIds,
-                        camData,
-                        width,
-                        height,
-                        sample
-                    );
-                }
-            });
-        }
-        
-        // Execute the taskflow
-        m_impl->scheduler->run(taskflow);
-        
-        // Print progress for each sample
-        for (uint32_t sample = 0; sample < spp; ++sample) {
-            std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
-        }
-    } else {
-        // Fall back to serial rendering if no scheduler or single sample
-        for (uint32_t sample = 0; sample < spp; ++sample) {
-            std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
-            
-            m_impl->renderSample(
-                gasHandle,
-                d_vertices,
-                d_texcoords,
-                d_indices,
-                d_triangleMaterialIds,
-                camData,
-                width,
-                height,
-                sample
-            );
-        }
+        m_impl->renderSample(
+            gasHandle,
+            d_vertices,
+            d_texcoords,
+            d_indices,
+            d_triangleMaterialIds,
+            camData,
+            width,
+            height,
+            sample
+        );
     }
     
     std::cout << std::endl;
     
     uint32_t checkCount = (100u < m_impl->numPixels) ? 100u : m_impl->numPixels;
+
+    // Debug: check accumulation buffer before denoiser
+    {
+        std::vector<float3> debugAccum(m_impl->numPixels);
+        CUDA_CHECK(cudaMemcpy(
+            debugAccum.data(),
+            (void*)m_impl->accumulationBuffers.d_accumBuffer,
+            m_impl->numPixels * sizeof(float3),
+            cudaMemcpyDeviceToHost
+        ));
+        float maxAccum = 0.0f;
+        for (uint32_t i = 0; i < checkCount; ++i) {
+            float val = std::max({debugAccum[i].x, debugAccum[i].y, debugAccum[i].z});
+            maxAccum = std::max(maxAccum, val);
+        }
+        std::cout << "[Debug] Accum buffer max (first 100 pixels): " << maxAccum << std::endl;
+        
+        // Check center pixel
+        uint32_t centerIdx = (height/2) * width + (width/2);
+        std::cout << "[Debug] Center pixel (" << width/2 << "," << height/2 << "): (" 
+                  << debugAccum[centerIdx].x << "," << debugAccum[centerIdx].y << "," << debugAccum[centerIdx].z << ")" << std::endl;
+    }
 
     if (enableDenoiser) {
         // determine tile size (0 means whole image). If tiling is disabled
@@ -394,9 +378,9 @@ void Renderer::render(
         // prepare beauty/albedo/normal arrays in float4 space (full image)
         const uint32_t count = m_impl->numPixels;
         const float invSpp = 1.0f / spp;
-        const float3* d_accum = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_accumBuffer);
+        const float3* d_accum = reinterpret_cast<const float3*>(m_impl->accumulationBuffers.d_accumBuffer);
         float4* d_input = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_input);
-        void* scaleArgs[] = { &d_accum, &d_input, (void*)&count, (void*)&invSpp };
+        void* scaleArgs[] = { (void*)d_accum, (void*)d_input, (void*)&count, (void*)&invSpp };
 
         // zero-out the output buffer to avoid partial-coverage artifacts when
         // copying tiles later.  this prevents the "cross" of black pixels seen
@@ -416,15 +400,18 @@ void Renderer::render(
             nullptr
         ));
 
+        // Synchronize to ensure scale kernel completes
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         // also guide buffers
-        const float3* d_albedo = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_albedoBuffer);
-        const float3* d_normal = reinterpret_cast<const float3*>(m_impl->accumBuffers.d_normalBuffer);
+        const float3* d_albedo = reinterpret_cast<const float3*>(m_impl->accumulationBuffers.d_albedoBuffer);
+        const float3* d_normal = reinterpret_cast<const float3*>(m_impl->accumulationBuffers.d_normalBuffer);
         float4* d_albedoInput = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_albedoInput);
         float4* d_normalInput = reinterpret_cast<float4*>(m_impl->denoiser.imageBuffers.d_normalInput);
         const float invOne = 1.0f;
 
-        void* scaleAlbedoArgs[] = { &d_albedo, &d_albedoInput, (void*)&count, (void*)&invOne };
-        void* scaleNormalArgs[] = { &d_normal, &d_normalInput, (void*)&count, (void*)&invOne };
+        void* scaleAlbedoArgs[] = { (void*)d_albedo, (void*)d_albedoInput, (void*)&count, (void*)&invOne };
+        void* scaleNormalArgs[] = { (void*)d_normal, (void*)d_normalInput, (void*)&count, (void*)&invOne };
         CU_CHECK(cuLaunchKernel(
             m_impl->kernelFunctions.scaleKernel,
             numBlocks, 1, 1,
@@ -474,331 +461,63 @@ void Renderer::render(
             m_impl->denoiser.buffers.scratchSize
         ));
 
-        // compute tile tasks (input region may include overlap, output region
-        // is strictly the non‑overlapping tile).  we also store computed input
-        // width/height so later the baseInput can be sized correctly per task.
-        struct Task { uint32_t inX,inY,inW,inH; uint32_t outX,outY,outW,outH; };
-        std::vector<Task> tasks;
-        uint32_t ov = m_impl->denoiser.overlap;
-
-        if (tileW < width || tileH < height) {
-            // adjust overlap per-dimension so that it never exceeds half the
-            // tile size; this guarantees adjacent tiles will have distinct
-            // input regions even if the denoiser overlap is huge.
-            uint32_t ovx = std::min(ov, tileW/2);
-            uint32_t ovy = std::min(ov, tileH/2);
-
-            for (uint32_t y = 0; y < height; y += tileH) {
-                uint32_t outH = std::min(tileH, height - y);
-                uint32_t topOverlap = (y > ovy) ? ovy : y;
-                uint32_t spaceBottom = height - (y + outH);
-                uint32_t bottomOverlap = std::min(ovy, spaceBottom);
-                uint32_t inY = (y > ovy) ? (y - ovy) : 0;
-                uint32_t inH = outH + topOverlap + bottomOverlap;
-                if (inY + inH > height) inH = height - inY;
-
-                for (uint32_t x = 0; x < width; x += tileW) {
-                    uint32_t outW = std::min(tileW, width - x);
-                    uint32_t leftOverlap = (x > ovx) ? ovx : x;
-                    uint32_t spaceRight = width - (x + outW);
-                    uint32_t rightOverlap = std::min(ovx, spaceRight);
-                    uint32_t inX = (x > ovx) ? (x - ovx) : 0;
-                    uint32_t inW = outW + leftOverlap + rightOverlap;
-                    if (inX + inW > width) inW = width - inX;
-
-                    tasks.push_back({inX, inY, inW, inH, x, y, outW, outH});
-                }
-            }
-        } else {
-            // single-task for whole image
-            tasks.push_back({0,0,width,height,0,0,width,height});
-        }
-
-        // debug: print task count and each entry coordinates
-        std::cout << "[Renderer] denoiser tiling: " << tasks.size() << " tasks\n";
-        for (size_t ti = 0; ti < tasks.size(); ++ti) {
-            auto &t = tasks[ti];
-            std::cout << "  task[" << ti << "] in=" << t.inX << "," << t.inY << " (" << t.inW << "x" << t.inH << ")"
-                      << " out=" << t.outX << "," << t.outY << " (" << t.outW << "x" << t.outH << ")\n";
-        }
-
+        // 使用单任务降噪，提高质量
+        OptixImage2D input = baseInput;
+        input.data = m_impl->denoiser.imageBuffers.d_input;
+        input.width = width;
+        input.height = height;
         
-
-        // perform denoiser per task
-        // If any computed task input covers a full image dimension, fall back
-        // to single-task denoising to avoid mismatched input contexts.
-        bool invalidMixing = false;
-        // Diagnostic override: when collecting low-level diagnostics, allow
-        // forcing tiling even if conservative checks would disable it. Set
-        // to false for normal operation.
-        const bool diagnosticForceTiling = true;
-        for (auto &tt : tasks) {
-            if (tt.inW == width || tt.inH == height) { invalidMixing = true; break; }
-        }
-        if (invalidMixing && tasks.size() > 1 && !diagnosticForceTiling) {
-            std::cout << "[Renderer] tile input spans full image in at least one task; disabling tiling to avoid seams\n";
-            tasks.clear();
-            tasks.push_back({0,0,width,height,0,0,width,height});
-        } else if (invalidMixing && tasks.size() > 1 && diagnosticForceTiling) {
-            std::cout << "[Renderer] WARNING: diagnosticForceTiling active — proceeding with tiled tasks despite conservative mixing checks\n";
-        }
-
-        // --- Diagnostic: collect seam sample points and capture four checkpoints
-        struct DiagPoint { uint32_t gx, gy; uint32_t taskIdx; uint32_t localX, localY; float4 beforeCopy; float4 afterCopyToTile; float4 afterDenoise; float4 afterCopyBack; };
-        std::vector<DiagPoint> diagPoints;
-
-        // For each task boundary, pick representative seam pixels (left/right and top/bottom)
-        for (size_t ti = 0; ti < tasks.size(); ++ti) {
-            auto &t = tasks[ti];
-            if (t.outX > 0) {
-                uint32_t seamX = t.outX;
-                uint32_t seamY = t.outY + t.outH/2;
-                if (seamY >= height) seamY = height-1;
-                if (seamX > 0) diagPoints.push_back({seamX-1, seamY, (uint32_t)ti, 0,0});
-                if (seamX < width) diagPoints.push_back({seamX, seamY, (uint32_t)ti, 0,0});
-            }
-            if (t.outY > 0) {
-                uint32_t seamY = t.outY;
-                uint32_t seamX = t.outX + t.outW/2;
-                if (seamX >= width) seamX = width-1;
-                if (seamY > 0) diagPoints.push_back({seamX, seamY-1, (uint32_t)ti, 0,0});
-                if (seamY < height) diagPoints.push_back({seamX, seamY, (uint32_t)ti, 0,0});
-            }
-        }
-
-        // Fallback: if no boundaries, sample a few representative pixels
-        if (diagPoints.empty()) {
-            uint32_t cx = width / 2;
-            uint32_t cy = height / 2;
-            diagPoints.push_back({cx, cy, 0, 0, 0});
-            diagPoints.push_back({(cx>1)?cx-1:0, cy, 0, 0, 0});
-            diagPoints.push_back({(cx+1<width)?cx+1:width-1, cy, 0, 0, 0});
-            diagPoints.push_back({cx, (cy>1)?cy-1:0, 0, 0, 0});
-        }
-
-        // compute local coords and initialize diagnostics
-        for (auto &p : diagPoints) {
-            if (p.gx >= width) p.gx = width-1;
-            if (p.gy >= height) p.gy = height-1;
-            auto &t = tasks[p.taskIdx];
-            if (p.gx < t.inX) p.localX = 0; else p.localX = p.gx - t.inX;
-            if (p.gy < t.inY) p.localY = 0; else p.localY = p.gy - t.inY;
-            p.beforeCopy = make_float4(-1.0f,-1.0f,-1.0f,-1.0f);
-            p.afterCopyToTile = make_float4(-1.0f,-1.0f,-1.0f,-1.0f);
-            p.afterDenoise = make_float4(-1.0f,-1.0f,-1.0f,-1.0f);
-            p.afterCopyBack = make_float4(-1.0f,-1.0f,-1.0f,-1.0f);
-        }
-
-        // capture "before-copy" values from the full-image contiguous input
-        for (auto &p : diagPoints) {
-            float4 tmp = {};
-            void* src = (void*)(m_impl->denoiser.imageBuffers.d_input + (p.gy * width + p.gx) * sizeof(float4));
-            CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
-            p.beforeCopy = tmp;
-        }
-
-        for (size_t taskIndex = 0; taskIndex < tasks.size(); ++taskIndex) {
-            auto &t = tasks[taskIndex];
-            // copy the tile input region (which may have arbitrary strides in
-            // the full-image buffer) into a contiguous temporary buffer so the
-            // denoiser can process it correctly
-            for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_input + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileInputBuffer + ty * t.inW * sizeof(float4));
-                CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
-            }
-            // do the same for guidance buffers into their dedicated tile buffers
-            if (m_impl->denoiser.imageBuffers.d_albedoInput) {
-                for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                    void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_albedoInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                    void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileAlbedoBuffer + ty * t.inW * sizeof(float4));
-                    CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
-                }
-            }
-            if (m_impl->denoiser.imageBuffers.d_normalInput) {
-                for (uint32_t ty = 0; ty < t.inH; ++ty) {
-                    void* srcRow = (void*)(m_impl->denoiser.imageBuffers.d_normalInput + ((t.inY + ty) * width + t.inX) * sizeof(float4));
-                    void* dstRow = (void*)(m_impl->denoiser.tileBuffers.tileNormalBuffer + ty * t.inW * sizeof(float4));
-                    CUDA_CHECK(cudaMemcpy(dstRow, srcRow, t.inW * sizeof(float4), cudaMemcpyDeviceToDevice));
-                }
-            }
-
-            // after-copy-to-tile: sample relevant diagnostic points that belong to this task
-            for (auto &p : diagPoints) {
-                // if this point lies within this task's input region, sample it
-                if (p.gx < t.inX || p.gx >= t.inX + t.inW || p.gy < t.inY || p.gy >= t.inY + t.inH) continue;
-                float4 tmp = {};
-                uint32_t localX = p.gx - t.inX;
-                uint32_t localY = p.gy - t.inY;
-                void* src = (void*)(m_impl->denoiser.tileBuffers.tileInputBuffer + (localY * t.inW + localX) * sizeof(float4));
-                CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
-                p.afterCopyToTile = tmp;
-            }
-
-            // update baseInput to point to the temporary tile input buffer (now
-            // contiguous with correct dimensions)
-            baseInput.data = m_impl->denoiser.tileBuffers.tileInputBuffer;
-            baseInput.width = t.inW;
-            baseInput.height = t.inH;
-            baseInput.rowStrideInBytes = t.inW * sizeof(float4); // contiguous
-
-            // configure output to temporary tile buffer sized to the input
-            // region; we'll copy the valid subset into the final image later.
-            OptixImage2D output = {};
-            output.data = m_impl->denoiser.tileBuffers.tileBuffer;
-            output.width = t.inW;
-            output.height = t.inH;
-            output.rowStrideInBytes = t.inW * sizeof(float4);
-            output.pixelStrideInBytes = sizeof(float4);
-            output.format = OPTIX_PIXEL_FORMAT_FLOAT4;
-
-            OptixDenoiserLayer layer = {};
-            layer.input = baseInput;
-            layer.output = output;
-            layer.previousOutput = {};
-            layer.type = OPTIX_DENOISER_AOV_TYPE_BEAUTY;
-
-            OptixDenoiserGuideLayer guide = {};
-            guide.albedo.data = 0;
-            guide.albedo.width = 0;
-            guide.albedo.height = 0;
-            guide.albedo.rowStrideInBytes = 0;
-            guide.albedo.pixelStrideInBytes = 0;
-            guide.albedo.format = OPTIX_PIXEL_FORMAT_FLOAT4;
-            guide.normal = guide.albedo;
-            if (m_impl->denoiser.imageBuffers.d_albedoInput) {
-                guide.albedo.data = m_impl->denoiser.tileBuffers.tileAlbedoBuffer;
-                guide.albedo.width = t.inW;
-                guide.albedo.height = t.inH;
-                guide.albedo.rowStrideInBytes = t.inW * sizeof(float4);
-                guide.albedo.pixelStrideInBytes = sizeof(float4);
-            }
-            if (m_impl->denoiser.imageBuffers.d_normalInput) {
-                guide.normal.data = m_impl->denoiser.tileBuffers.tileNormalBuffer;
-                guide.normal.width = t.inW;
-                guide.normal.height = t.inH;
-                guide.normal.rowStrideInBytes = t.inW * sizeof(float4);
-                guide.normal.pixelStrideInBytes = sizeof(float4);
-                guide.normal.format = OPTIX_PIXEL_FORMAT_FLOAT4;
-            }
-
-            OptixDenoiserParams params = {};
-            params.hdrAverageColor = 0;
-            params.blendFactor = denoiserBlend;
-            // Use the precomputed full-image intensity to keep tiles consistent
-            params.hdrIntensity = m_impl->denoiser.buffers.d_intensity;
-            params.temporalModeUsePreviousLayers = 0;
-
-            OPTIX_CHECK(optixDenoiserInvoke(
-                m_impl->denoiser.handle,
-                0,
-                &params,
-                m_impl->denoiser.buffers.d_state,
-                m_impl->denoiser.buffers.stateSize,
-                &guide,
-                &layer,
-                1,
-                0,
-                0,
-                m_impl->denoiser.buffers.d_scratch,
-                m_impl->denoiser.buffers.scratchSize
-            ));
-
-            // after-denoiser: sample tile output for diagnostic points belonging to this task
-            for (auto &p : diagPoints) {
-                if (p.gx < t.inX || p.gx >= t.inX + t.inW || p.gy < t.inY || p.gy >= t.inY + t.inH) continue;
-                float4 tmp = {};
-                uint32_t localX = p.gx - t.inX;
-                uint32_t localY = p.gy - t.inY;
-                void* src = (void*)(m_impl->denoiser.tileBuffers.tileBuffer + (localY * t.inW + localX) * sizeof(float4));
-                CUDA_CHECK(cudaMemcpy(&tmp, src, sizeof(float4), cudaMemcpyDeviceToHost));
-                p.afterDenoise = tmp;
-            }
-
-            // Instead of direct memcpy into the final image, accumulate the
-            // entire tile output into the merge accumulators using the
-            // overlap-weighted kernel.  This writes into `d_mergeAccum` and
-            // `d_mergeWeight` so overlapping tiles blend smoothly.  The
-            // kernel is launched using the CUDA Driver API (cubin).
-            uint32_t offX = t.outX - t.inX;
-            uint32_t offY = t.outY - t.inY;
-
-            int ovx = static_cast<int>(std::min<uint32_t>(m_impl->denoiser.overlap, t.inW/2));
-            int ovy = static_cast<int>(std::min<uint32_t>(m_impl->denoiser.overlap, t.inH/2));
-            void* mergeArgs[] = {
-                &m_impl->denoiser.tileBuffers.tileBuffer,
-                &t.inW,
-                &t.inH,
-                &t.inX,
-                &t.inY,
-                &offX,
-                &offY,
-                &width,
-                &height,
-                &m_impl->mergeBuffers.d_mergeAccum,
-                &m_impl->mergeBuffers.d_mergeWeight,
-                &ovx,
-                &ovy
-            };
-
-            const unsigned int blockX = 16;
-            const unsigned int blockY = 16;
-            unsigned int gridX = (t.inW + blockX - 1) / blockX;
-            unsigned int gridY = (t.inH + blockY - 1) / blockY;
-
-            CU_CHECK(cuLaunchKernel(
-            m_impl->kernelFunctions.mergeKernel,
-            gridX, gridY, 1,
-            blockX, blockY, 1,
+        OptixImage2D output = baseOutput;
+        output.data = m_impl->denoiser.imageBuffers.d_output;
+        output.width = width;
+        output.height = height;
+        
+        OptixDenoiserLayer layer = {};
+        layer.input = input;
+        layer.output = output;
+        layer.previousOutput = {};
+        layer.type = OPTIX_DENOISER_AOV_TYPE_BEAUTY;
+        
+        OptixDenoiserGuideLayer guide = {};
+        guide.albedo.data = m_impl->denoiser.imageBuffers.d_albedoInput;
+        guide.albedo.width = width;
+        guide.albedo.height = height;
+        guide.albedo.rowStrideInBytes = width * sizeof(float4);
+        guide.albedo.pixelStrideInBytes = sizeof(float4);
+        guide.albedo.format = OPTIX_PIXEL_FORMAT_FLOAT4;
+        
+        guide.normal.data = m_impl->denoiser.imageBuffers.d_normalInput;
+        guide.normal.width = width;
+        guide.normal.height = height;
+        guide.normal.rowStrideInBytes = width * sizeof(float4);
+        guide.normal.pixelStrideInBytes = sizeof(float4);
+        guide.normal.format = OPTIX_PIXEL_FORMAT_FLOAT4;
+        
+        // 优化降噪器参数，提高质量
+        OptixDenoiserParams params = {};
+        params.hdrAverageColor = 0;
+        params.blendFactor = 0.8f; // 提高blend因子，使降噪效果更明显
+        params.hdrIntensity = m_impl->denoiser.buffers.d_intensity;
+        params.temporalModeUsePreviousLayers = 0;
+        
+        OPTIX_CHECK(optixDenoiserInvoke(
+            m_impl->denoiser.handle,
+            0,
+            &params,
+            m_impl->denoiser.buffers.d_state,
+            m_impl->denoiser.buffers.stateSize,
+            &guide,
+            &layer,
+            1,
             0,
             0,
-            mergeArgs,
-            nullptr
+            m_impl->denoiser.buffers.d_scratch,
+            m_impl->denoiser.buffers.scratchSize
         ));
-        }
+        
         CUDA_CHECK(cudaDeviceSynchronize());
 
-        // Normalize merged accumulators into the denoiser output image
-        {
-            void* normArgs[] = { &m_impl->mergeBuffers.d_mergeAccum, &m_impl->mergeBuffers.d_mergeWeight, &m_impl->denoiser.imageBuffers.d_output, &width, &height };
-            const unsigned int normBlock = 256;
-            unsigned int normGrid = (m_impl->numPixels + normBlock - 1) / normBlock;
-            CU_CHECK(cuLaunchKernel(
-                m_impl->kernelFunctions.normalizeKernel,
-                normGrid, 1, 1,
-                normBlock, 1, 1,
-                0,
-                0,
-                normArgs,
-                nullptr
-            ));
-            CUDA_CHECK(cudaDeviceSynchronize());
-        }
-
-        // after normalization, sample assembled output buffer for diagnostics
-        if (!diagPoints.empty()) {
-            for (auto &p : diagPoints) {
-                float4 tmp = {};
-                void* outAddr = (void*)(m_impl->denoiser.imageBuffers.d_output + (p.gy * width + p.gx) * sizeof(float4));
-                CUDA_CHECK(cudaMemcpy(&tmp, outAddr, sizeof(float4), cudaMemcpyDeviceToHost));
-                p.afterCopyBack = tmp;
-            }
-
-            std::cout << "[Diag] Diagnostic seam samples (gx,gy) -> beforeCopy | afterCopyToTile | afterDenoise | afterCopyBack\n";
-            for (size_t i = 0; i < diagPoints.size(); ++i) {
-                auto &p = diagPoints[i];
-                auto f4s = [](const float4 &f){ char buf[256]; sprintf(buf, "(%0.6f,%0.6f,%0.6f,%0.6f)", f.x, f.y, f.z, f.w); return std::string(buf); };
-                std::cout << "[Diag] p[" << i << "] " << p.gx << "," << p.gy << " -> "
-                          << f4s(p.beforeCopy) << " | "
-                          << f4s(p.afterCopyToTile) << " | "
-                          << f4s(p.afterDenoise) << " | "
-                          << f4s(p.afterCopyBack) << "\n";
-            }
-        }
-
-        // at this point the d_denoiserOutput buffer contains the assembled
-        // denoised image (tiles copied into place).  download it below.
-
+        // at this point the d_denoiserOutput buffer contains the denoised image
 
         std::vector<float4> denoised(m_impl->numPixels);
         CUDA_CHECK(cudaMemcpy(
@@ -813,19 +532,16 @@ void Renderer::render(
             outputBuffer[i].x = denoised[i].x;
             outputBuffer[i].y = denoised[i].y;
             outputBuffer[i].z = denoised[i].z;
-            if (i < checkCount) {
-                float val = (denoised[i].x > denoised[i].y) ? denoised[i].x : denoised[i].y;
-                val = (val > denoised[i].z) ? val : denoised[i].z;
-                maxOutput = (maxOutput > val) ? maxOutput : val;
-            }
+            float val = std::max({denoised[i].x, denoised[i].y, denoised[i].z});
+            maxOutput = std::max(maxOutput, val);
         }
-        std::cout << "[Debug] Output buffer max (first 100 pixels, denoised): " << maxOutput << std::endl;
+        std::cout << "[Debug] Output buffer max (all pixels, denoised): " << maxOutput << std::endl;
     } else {
         // Download result
         std::vector<float3> accumBuffer(m_impl->numPixels);
         CUDA_CHECK(cudaMemcpy(
             accumBuffer.data(),
-            (void*)m_impl->accumBuffers.d_accumBuffer,
+            (void*)m_impl->accumulationBuffers.d_accumBuffer,
             m_impl->numPixels * sizeof(float3),
             cudaMemcpyDeviceToHost
         ));

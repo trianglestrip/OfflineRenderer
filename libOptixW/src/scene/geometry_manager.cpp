@@ -148,6 +148,9 @@ void GeometryManager::buildGAS() {
         0
     ));
 
+    // 同步确保 GAS 构建完成
+    CU_CHECK(cuStreamSynchronize(0));
+
     // 释放临时缓冲
     CU_CHECK(cuMemFree(d_tempBuffer));
 

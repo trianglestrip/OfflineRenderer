@@ -6,34 +6,37 @@
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
+#include <cuda.h>
 #include <iostream>
 
 namespace optixw {
 
-// Global OptiX context for access from other modules
 OptixDeviceContext g_optixContext = nullptr;
 
-// Context implementation
 class Context::Impl {
 public:
     OptixDeviceContext optixContext = nullptr;
     CUcontext cudaContext = nullptr;
     
     void initialize(int deviceId) {
-        // Initialize CUDA
+        CUDA_CHECK(cudaSetDevice(deviceId));
         CUDA_CHECK(cudaFree(0));
         
+        int deviceCount;
+        cudaGetDeviceCount(&deviceCount);
+        
+        cudaDeviceProp prop;
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, deviceId));
+        std::cout << "[OptixW] Using device: " << prop.name << std::endl;
+        
+        CU_CHECK(cuInit(0));
         CUdevice device;
         CU_CHECK(cuDeviceGet(&device, deviceId));
         
-        char deviceName[256];
-        CU_CHECK(cuDeviceGetName(deviceName, sizeof(deviceName), device));
-        std::cout << "[OptixW] Using device: " << deviceName << std::endl;
+        CU_CHECK(cuDevicePrimaryCtxRetain(&cudaContext, device));
         
-        CUctxCreateParams params = {};
-        CU_CHECK(cuCtxCreate(&cudaContext, &params, 0, device));
+        CU_CHECK(cuCtxPushCurrent(cudaContext));
         
-        // Initialize OptiX
         OPTIX_CHECK(optixInit());
         
         OptixDeviceContextOptions options = {};
@@ -46,7 +49,7 @@ public:
         
         OPTIX_CHECK(optixDeviceContextCreate(cudaContext, &options, &optixContext));
         
-        g_optixContext = optixContext;  // Store global reference
+        g_optixContext = optixContext;
         
         std::cout << "[OptixW] OptiX context created" << std::endl;
     }
@@ -56,7 +59,13 @@ public:
             optixDeviceContextDestroy(optixContext);
         }
         if (cudaContext) {
-            cuCtxDestroy(cudaContext);
+            CUcontext prevCtx;
+            cuCtxPopCurrent(&prevCtx);
+            
+            CUdevice device;
+            if (cuDeviceGet(&device, 0) == CUDA_SUCCESS) {
+                cuDevicePrimaryCtxRelease(device);
+            }
         }
     }
 };

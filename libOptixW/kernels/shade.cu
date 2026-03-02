@@ -1,41 +1,43 @@
+#include "optixw/types.h"
+#include "optixw/wavefront_kernel_params.h"
 #include <optix.h>
+#include <optix_stubs.h>
 #include <cuda_runtime.h>
-#include <optixw/wavefront_kernel_params.h>
-#include "vector_math.cuh"
+#include <device_launch_parameters.h>
+#include <math.h>
 
-using namespace optixw;
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
-static constexpr float kPi = 3.14159265f;
-static constexpr float kRayEps = 0.001f;
-static constexpr uint32_t kInvalidTextureId = 0xFFFFFFFFu;
+#define M_1_PI (1.0f / M_PI)
 
-enum MaterialTag : uint32_t {
-    kMatte = 0,
-    kLambertianScattering = 1,
-    kSpecularReflection = 2,
-    kSpecularScattering = 3,
-    kMicrofacetReflection = 4,
-    kMicrofacetScattering = 5,
-    kUE4 = 6,
-    kOldStyle = 7,
-    kDiffuseEmitter = 8,
-    kDirectionalEmitter = 9,
-    kPointEmitter = 10,
-    kMulti = 11,
-    kEnvironmentEmitter = 12
-};
+// Material types
+#define kMatte 0
+#define kLambertianScattering 1
+#define kUE4 2
+#define kOldStyle 3
+#define kSpecularReflection 4
+#define kSpecularScattering 5
+#define kMicrofacetReflection 6
+#define kMicrofacetScattering 7
+#define kDiffuseEmitter 8
+#define kSpecularEmitter 9
+#define kEnvironmentEmitter 10
+#define kMulti 11
 
+// BSDF sample structure
 struct BSDFSample {
     float3 wi;
-    float3 weight; // f * cos / pdf
+    float3 weight;
     float pdf;
-    uint32_t isDelta;
     uint32_t valid;
+    uint32_t isDelta;
 };
 
 __device__ inline float randf(uint32_t& seed) {
-    seed = seed * 1664525u + 1013904223u;
-    return (float)(seed >> 16) / 65536.0f;
+    seed = 1103515245 * seed + 12345;
+    return static_cast<float>(seed & 0x7FFFFFFF) / 2147483648.0f;
 }
 
 __device__ inline float pow5(float x) {
@@ -44,531 +46,431 @@ __device__ inline float pow5(float x) {
 }
 
 __device__ inline float saturate(float x) {
-    return fminf(1.0f, fmaxf(0.0f, x));
+    return fmaxf(0.0f, fminf(1.0f, x));
 }
 
 __device__ inline float max3(const float3& v) {
-    return fmaxf(v.x, fmaxf(v.y, v.z));
+    return fmaxf(fmaxf(v.x, v.y), v.z);
 }
 
-__device__ inline float3 black3() { return make_float3(0.0f, 0.0f, 0.0f); }
-__device__ inline float3 white3() { return make_float3(1.0f, 1.0f, 1.0f); }
-__device__ inline bool hasValue(const float3& v) { return v.x > 0.0f || v.y > 0.0f || v.z > 0.0f; }
-__device__ inline float3 lerp3(const float3& a, const float3& b, float t) { return a * (1.0f - t) + b * t; }
-__device__ inline float3 cdiv3(const float3& a, const float3& b) {
+
+
+__device__ inline float3 black3() {
+    return make_float3(0.0f, 0.0f, 0.0f);
+}
+
+__device__ inline float3 white3() {
+    return make_float3(1.0f, 1.0f, 1.0f);
+}
+
+__device__ inline float3 operator+(const float3& a, const float3& b) {
+    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+__device__ inline float3 operator-(const float3& a, const float3& b) {
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+__device__ inline float3 operator-(const float3& a) {
+    return make_float3(-a.x, -a.y, -a.z);
+}
+
+__device__ inline float3 operator*(const float3& a, const float3& b) {
+    return make_float3(a.x * b.x, a.y * b.y, a.z * b.z);
+}
+
+__device__ inline float3 operator*(const float3& a, float b) {
+    return make_float3(a.x * b, a.y * b, a.z * b);
+}
+
+__device__ inline float3 operator/(const float3& a, float b) {
+    return make_float3(a.x / b, a.y / b, a.z / b);
+}
+
+__device__ inline float3 operator*(float a, const float3& b) {
+    return make_float3(a * b.x, a * b.y, a * b.z);
+}
+
+__device__ inline float3 operator/(const float3& a, const float3& b) {
+    return make_float3(a.x / b.x, a.y / b.y, a.z / b.z);
+}
+
+__device__ inline float3 operator+(const float3& a, float b) {
+    return make_float3(a.x + b, a.y + b, a.z + b);
+}
+
+__device__ inline float3 sqrtf(const float3& v) {
+    return make_float3(sqrtf(v.x), sqrtf(v.y), sqrtf(v.z));
+}
+
+__device__ inline float dot(const float3& a, const float3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+__device__ inline float length(const float3& v) {
+    return sqrtf(dot(v, v));
+}
+
+__device__ inline float3 normalize(const float3& v) {
+    float l = length(v);
+    if (l < 1e-8f) {
+        return black3();
+    }
+    return v / l;
+}
+
+__device__ inline float3 cross(const float3& a, const float3& b) {
     return make_float3(
-        a.x / fmaxf(b.x, 1e-6f),
-        a.y / fmaxf(b.y, 1e-6f),
-        a.z / fmaxf(b.z, 1e-6f));
-}
-
-__device__ inline float2 make_float2_lerp(const float2& a, const float2& b, float t) {
-    return make_float2(a.x * (1.0f - t) + b.x * t, a.y * (1.0f - t) + b.y * t);
-}
-
-__device__ inline float wrap01(float x) {
-    return x - floorf(x);
-}
-
-__device__ inline float4 sampleTexture2DBilinear(const Texture2DData& tex, float2 uv) {
-    const uint32_t w = tex.width;
-    const uint32_t h = tex.height;
-    if (tex.pixels == nullptr || w == 0 || h == 0) {
-        return make_float4(1.0f, 1.0f, 1.0f, 1.0f);
-    }
-
-    float u = wrap01(uv.x);
-    float v = wrap01(uv.y);
-    float x = u * static_cast<float>(w - 1u);
-    float y = (1.0f - v) * static_cast<float>(h - 1u);
-
-    uint32_t x0 = static_cast<uint32_t>(floorf(x));
-    uint32_t y0 = static_cast<uint32_t>(floorf(y));
-    uint32_t x1 = min(x0 + 1u, w - 1u);
-    uint32_t y1 = min(y0 + 1u, h - 1u);
-
-    float tx = x - static_cast<float>(x0);
-    float ty = y - static_cast<float>(y0);
-
-    const float4 c00 = tex.pixels[y0 * w + x0];
-    const float4 c10 = tex.pixels[y0 * w + x1];
-    const float4 c01 = tex.pixels[y1 * w + x0];
-    const float4 c11 = tex.pixels[y1 * w + x1];
-
-    const float4 cx0 = make_float4(
-        c00.x * (1.0f - tx) + c10.x * tx,
-        c00.y * (1.0f - tx) + c10.y * tx,
-        c00.z * (1.0f - tx) + c10.z * tx,
-        c00.w * (1.0f - tx) + c10.w * tx);
-    const float4 cx1 = make_float4(
-        c01.x * (1.0f - tx) + c11.x * tx,
-        c01.y * (1.0f - tx) + c11.y * tx,
-        c01.z * (1.0f - tx) + c11.z * tx,
-        c01.w * (1.0f - tx) + c11.w * tx);
-
-    return make_float4(
-        cx0.x * (1.0f - ty) + cx1.x * ty,
-        cx0.y * (1.0f - ty) + cx1.y * ty,
-        cx0.z * (1.0f - ty) + cx1.z * ty,
-        cx0.w * (1.0f - ty) + cx1.w * ty);
-}
-
-__device__ inline float3 sampleEnvironment(const ShadeKernelParams& params, const float3& dir) {
-    if (params.environmentMap == nullptr || params.environmentMapWidth == 0 || params.environmentMapHeight == 0) {
-        return params.environmentRadiance;
-    }
-    float3 d = normalize(dir);
-    float u = wrap01(atan2f(d.z, d.x) * (0.5f / kPi) + 0.5f);
-    float v = acosf(fminf(1.0f, fmaxf(-1.0f, d.y))) / kPi;
-    const uint32_t x = min(static_cast<uint32_t>(u * params.environmentMapWidth), params.environmentMapWidth - 1u);
-    const uint32_t y = min(static_cast<uint32_t>(v * params.environmentMapHeight), params.environmentMapHeight - 1u);
-    const float4 c = params.environmentMap[y * params.environmentMapWidth + x];
-    return make_float3(c.x, c.y, c.z) * fmaxf(params.environmentMapScale, 0.0f);
-}
-
-__device__ inline MaterialData resolveMaterial(
-    const MaterialData& inMat,
-    const HitInfo& hit,
-    const Texture2DData* textures,
-    uint32_t numTextures)
-{
-    MaterialData out = inMat;
-    if (inMat.baseColorTextureId != kInvalidTextureId &&
-        inMat.baseColorTextureId < numTextures &&
-        textures != nullptr) {
-        const Texture2DData tex = textures[inMat.baseColorTextureId];
-        const float4 c = sampleTexture2DBilinear(tex, hit.texCoord);
-        out.baseColor = make_float3(c.x, c.y, c.z);
-    }
-    return out;
-}
-
-__device__ inline float3 sampleCosineHemisphere(float u1, float u2, float* pdf) {
-    float phi = 2.0f * kPi * u1;
-    float cosTheta = sqrtf(u2);
-    float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - u2));
-    *pdf = cosTheta / kPi;
-    return make_float3(cosf(phi) * sinTheta, cosTheta, sinf(phi) * sinTheta);
-}
-
-__device__ inline float3 toWorld(const float3& local, const float3& normal) {
-    float3 tangent;
-    if (fabsf(normal.y) < 0.9f) {
-        tangent = normalize(cross(make_float3(0, 1, 0), normal));
-    } else {
-        tangent = normalize(cross(make_float3(1, 0, 0), normal));
-    }
-    float3 bitangent = cross(normal, tangent);
-    return tangent * local.x + normal * local.y + bitangent * local.z;
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
 }
 
 __device__ inline float3 reflectDir(const float3& wi, const float3& n) {
-    return normalize(wi - 2.0f * dot(wi, n) * n);
+    return wi - n * 2.0f * dot(wi, n);
 }
 
 __device__ inline bool refractDir(const float3& wi, const float3& n, float eta, float3* wt) {
-    float cosi = saturate(-dot(wi, n));
-    float sin2t = eta * eta * fmaxf(0.0f, 1.0f - cosi * cosi);
-    if (sin2t >= 1.0f) {
+    float cosThetaI = dot(-wi, n);
+    float sin2ThetaI = fmaxf(0.0f, 1.0f - cosThetaI * cosThetaI);
+    float sin2ThetaT = eta * eta * sin2ThetaI;
+    if (sin2ThetaT >= 1.0f) {
         return false;
     }
-    float cost = sqrtf(fmaxf(0.0f, 1.0f - sin2t));
-    *wt = normalize(eta * wi + (eta * cosi - cost) * n);
+    float cosThetaT = sqrtf(1.0f - sin2ThetaT);
+    *wt = normalize(wi * eta + n * (eta * cosThetaI - cosThetaT));
     return true;
 }
 
-__device__ inline float dielectricFresnel(float cosThetaI, float etaI, float etaT) {
-    cosThetaI = saturate(cosThetaI);
-    float sinThetaI2 = fmaxf(0.0f, 1.0f - cosThetaI * cosThetaI);
-    float eta = etaI / etaT;
-    float sinThetaT2 = eta * eta * sinThetaI2;
-    if (sinThetaT2 >= 1.0f) {
+__device__ inline float3 schlickFresnel(float cosTheta, const float3& F0) {
+    float exponent = powf(1.0f - cosTheta, 5.0f);
+    return F0 + (white3() - F0) * exponent;
+}
+
+__device__ inline float dielectricFresnel(float cosTheta, float etaI, float etaT) {
+    float sinThetaI = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+    float sinThetaT = etaI / etaT * sinThetaI;
+    if (sinThetaT >= 1.0f) {
         return 1.0f;
     }
-    float cosThetaT = sqrtf(fmaxf(0.0f, 1.0f - sinThetaT2));
-    float rs = (etaI * cosThetaI - etaT * cosThetaT) / (etaI * cosThetaI + etaT * cosThetaT);
-    float rp = (etaI * cosThetaT - etaT * cosThetaI) / (etaI * cosThetaT + etaT * cosThetaI);
-    return 0.5f * (rs * rs + rp * rp);
+    float cosThetaT = sqrtf(fmaxf(0.0f, 1.0f - sinThetaT * sinThetaT));
+    float rPar = (etaT * cosTheta - etaI * cosThetaT) / (etaT * cosTheta + etaI * cosThetaT);
+    float rPerp = (etaI * cosTheta - etaT * cosThetaT) / (etaI * cosTheta + etaT * cosThetaT);
+    return (rPar * rPar + rPerp * rPerp) * 0.5f;
 }
 
-__device__ inline float3 fresnelConductor(float cosThetaI, const float3& eta, const float3& k) {
-    cosThetaI = saturate(cosThetaI);
-    float cos2 = cosThetaI * cosThetaI;
-    float3 one = white3();
+__device__ inline float3 fresnelConductor(float cosTheta, const float3& eta, const float3& k) {
+    float cosTheta2 = cosTheta * cosTheta;
+    float sinTheta2 = 1.0f - cosTheta2;
     float3 eta2 = eta * eta;
     float3 k2 = k * k;
-    float3 t0 = eta2 + k2;
-    float3 t1 = t0 * cos2;
-    float3 t2 = 2.0f * eta * cosThetaI;
-    float3 rs = cdiv3(t0 - t2 + one, t0 + t2 + one);
-    float3 rp = cdiv3(t1 - t2 + one, t1 + t2 + one);
-    return 0.5f * (rs + rp);
+    float3 t1 = eta2 - k2 - make_float3(sinTheta2, sinTheta2, sinTheta2);
+    float3 a2plusb2 = sqrtf(t1 * t1 + make_float3(4.0f, 4.0f, 4.0f) * eta2 * k2);
+    float3 t2 = a2plusb2 + make_float3(cosTheta2, cosTheta2, cosTheta2);
+    float3 a = sqrtf((a2plusb2 + t1) * 0.5f);
+    float3 t3 = make_float3(2.0f, 2.0f, 2.0f) * a * cosTheta;
+    float3 Rs = (t2 - t3) / (t2 + t3);
+    float3 t4 = a2plusb2 * cosTheta2 + make_float3(sinTheta2 * sinTheta2, sinTheta2 * sinTheta2, sinTheta2 * sinTheta2);
+    float3 t5 = t3 * sinTheta2;
+    float3 Rp = Rs * (t4 - t5) / (t4 + t5);
+    return (Rp + Rs) * 0.5f;
 }
 
-__device__ inline float3 schlickFresnel(float cosTheta, const float3& F0) {
-    return F0 + (white3() - F0) * pow5(1.0f - saturate(cosTheta));
+__device__ inline float iorToF0(float etaI, float etaT) {
+    float f = (etaI - etaT) / (etaI + etaT);
+    return f * f;
+}
+
+__device__ inline float matToLinear(float x) {
+    if (x <= 0.04045f) {
+        return x / 12.92f;
+    } else {
+        return powf((x + 0.055f) / 1.055f, 2.4f);
+    }
+}
+
+__device__ inline float3 srgbToLinear(const float3& c) {
+    return make_float3(
+        matToLinear(c.x),
+        matToLinear(c.y),
+        matToLinear(c.z)
+    );
+}
+
+__device__ inline float3 linearToSrgb(const float3& c) {
+    auto clamp = [](float x) { return fmaxf(0.0f, fminf(1.0f, x)); };
+    auto toSrgb = [&clamp](float x) {
+        if (x <= 0.0031308f) {
+            return x * 12.92f;
+        } else {
+            return 1.055f * powf(x, 1.0f / 2.4f) - 0.055f;
+        }
+    };
+    return make_float3(
+        clamp(toSrgb(c.x)),
+        clamp(toSrgb(c.y)),
+        clamp(toSrgb(c.z))
+    );
+}
+
+__device__ inline float3 acesFilmic(const float3& x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    float3 numerator = x * (a * x + b);
+    float3 denominator = x * (c * x + d) + e;
+    return make_float3(
+        numerator.x / denominator.x,
+        numerator.y / denominator.y,
+        numerator.z / denominator.z
+    );
+}
+
+__device__ inline float3 sampleCosineHemisphere(float u1, float u2, float* pdf) {
+    float r = sqrtf(u1);
+    float theta = 2.0f * M_PI * u2;
+    float x = r * cosf(theta);
+    float y = r * sinf(theta);
+    float z = sqrtf(fmaxf(0.0f, 1.0f - u1));
+    *pdf = z * M_1_PI;
+    return make_float3(x, y, z);
+}
+
+__device__ inline float3 toWorld(const float3& local, const float3& n) {
+    float3 up = fabsf(n.z) < 0.999f ? make_float3(0.0f, 0.0f, 1.0f) : make_float3(1.0f, 0.0f, 0.0f);
+    float3 tangent = normalize(cross(up, n));
+    float3 bitangent = cross(n, tangent);
+    return local.x * tangent + local.y * bitangent + local.z * n;
 }
 
 __device__ inline float ggxD(float alpha, float NoH) {
-    float a2 = alpha * alpha;
-    float d = NoH * NoH * (a2 - 1.0f) + 1.0f;
-    return a2 / fmaxf(kPi * d * d, 1e-6f);
+    float alpha2 = alpha * alpha;
+    float NoH2 = NoH * NoH;
+    float denominator = NoH2 * (alpha2 - 1.0f) + 1.0f;
+    return alpha2 / (M_PI * denominator * denominator);
 }
 
 __device__ inline float ggxG1(float alpha, float NoV) {
-    float a2 = alpha * alpha;
-    float denom = NoV + sqrtf(a2 + (1.0f - a2) * NoV * NoV);
-    return (2.0f * NoV) / fmaxf(denom, 1e-6f);
+    float alpha2 = alpha * alpha;
+    float NoV2 = NoV * NoV;
+    float denominator = NoV + sqrtf(NoV2 + alpha2 * (1.0f - NoV2));
+    return 2.0f * NoV / denominator;
 }
 
 __device__ inline float ggxG(float alpha, float NoV, float NoL) {
     return ggxG1(alpha, NoV) * ggxG1(alpha, NoL);
 }
 
-__device__ inline float materialAlpha(const MaterialData& mat) {
-    float roughness = fmaxf(0.03f, mat.roughness);
-    return roughness * roughness;
-}
-
-__device__ inline float3 sampleGGXHalf(const float3& n, float alpha, uint32_t& seed, float* outPdfH) {
+__device__ inline float3 sampleGGXHalf(const float3& n, float alpha, uint32_t& seed, float* pdf) {
     float u1 = randf(seed);
     float u2 = randf(seed);
-    float phi = 2.0f * kPi * u1;
-    float a2 = alpha * alpha;
-    float cosTheta = sqrtf((1.0f - u2) / (1.0f + (a2 - 1.0f) * u2));
+    float phi = 2.0f * M_PI * u2;
+    float cosTheta = sqrtf((1.0f - u1) / (1.0f + (alpha * alpha - 1.0f) * u1));
     float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
-    float3 hLocal = make_float3(cosf(phi) * sinTheta, cosTheta, sinf(phi) * sinTheta);
-    float3 h = toWorld(hLocal, n);
-    float NoH = fmaxf(0.0f, dot(n, h));
-    float D = ggxD(alpha, NoH);
-    *outPdfH = D * NoH;
-    return normalize(h);
+    float3 h = make_float3(
+        sinTheta * cosf(phi),
+        sinTheta * sinf(phi),
+        cosTheta
+    );
+    *pdf = ggxD(alpha, cosTheta) * cosTheta;
+    return toWorld(h, n);
 }
 
-__device__ inline bool isValidMatId(uint32_t id, uint32_t numMaterials) {
-    return id < numMaterials;
+__device__ inline optixw::MaterialData resolveMaterial(
+    const optixw::MaterialData& mat,
+    const optixw::HitInfo& hit,
+    const optixw::Texture2DData* textures,
+    uint32_t numTextures
+) {
+    optixw::MaterialData result = mat;
+    if (mat.baseColorTextureId < numTextures && textures != nullptr) {
+        const optixw::Texture2DData& tex = textures[mat.baseColorTextureId];
+        if (tex.pixels != nullptr) {
+            float u = hit.texCoord.x;
+            float v = hit.texCoord.y;
+            u = fmodf(u, 1.0f);
+            v = fmodf(v, 1.0f);
+            if (u < 0.0f) u += 1.0f;
+            if (v < 0.0f) v += 1.0f;
+            uint32_t x = static_cast<uint32_t>(u * tex.width);
+            uint32_t y = static_cast<uint32_t>((1.0f - v) * tex.height);
+            uint32_t idx = y * tex.width + x;
+            if (idx < tex.width * tex.height) {
+                float4 texel = tex.pixels[idx];
+                result.baseColor = srgbToLinear(make_float3(texel.x, texel.y, texel.z)) * mat.baseColor;
+            }
+        }
+    }
+    return result;
 }
 
 __device__ inline uint32_t gatherMultiChildren(
-    const MaterialData& mat,
-    const MaterialData* materials,
+    const optixw::MaterialData& mat,
+    const optixw::MaterialData* materials,
     uint32_t numMaterials,
-    uint32_t outIds[4])
-{
-    uint32_t count = mat.numSubMaterials;
-    if (count > 4u) {
-        count = 4u;
-    }
-    uint32_t validCount = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t id = mat.subMaterialIndices[i];
-        if (isValidMatId(id, numMaterials) && materials[id].type != kEnvironmentEmitter) {
-            outIds[validCount++] = id;
-        }
-    }
-    return validCount;
-}
-
-__device__ inline bool isEmitterMaterial(
-    const MaterialData& mat,
-    const MaterialData* materials,
-    uint32_t numMaterials)
-{
-    if (mat.type == kMulti) {
-        uint32_t ids[4] = {};
-        uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
-        for (uint32_t i = 0; i < count; ++i) {
-            const MaterialData& child = materials[ids[i]];
-            if (child.type >= kDiffuseEmitter || hasValue(child.emission)) {
-                return true;
+    uint32_t* ids
+) {
+    uint32_t count = 0;
+    if (mat.numSubMaterials > 0 && materials != nullptr) {
+        for (uint32_t i = 0; i < mat.numSubMaterials && count < 4; ++i) {
+            uint32_t childId = mat.subMaterialIndices[i];
+            if (childId < numMaterials) {
+                ids[count++] = childId;
             }
         }
-        return false;
     }
-    return mat.type >= kDiffuseEmitter || hasValue(mat.emission);
+    return count;
 }
 
-__device__ inline float3 emitterRadiance(const MaterialData& mat, const float3& lightToTargetDir) {
-    float3 base = mat.emission * fmaxf(mat.emitterScale, 0.0f);
-    if (mat.type == kDirectionalEmitter) {
-        float3 d = normalize(mat.emitterDirection);
-        float cone = powf(fmaxf(dot(d, lightToTargetDir), 0.0f), 64.0f);
-        return base * cone;
-    }
-    return base;
+__device__ inline void ue4Params(const optixw::MaterialData& mat, float3* kd, float3* F0, float* alpha) {
+    *kd = mat.baseColor * (1.0f - mat.metallic);
+    *F0 = make_float3(0.04f, 0.04f, 0.04f) * (1.0f - mat.metallic) + mat.baseColor * mat.metallic;
+    *alpha = mat.roughness * mat.roughness;
 }
 
-__device__ inline float3 emitterRadianceResolved(
-    const MaterialData& mat,
-    const MaterialData* materials,
-    uint32_t numMaterials,
-    const float3& lightToTargetDir)
-{
-    if (mat.type == kMulti) {
-        uint32_t ids[4] = {};
-        uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
-        if (count == 0) {
-            return black3();
-        }
-        float3 sum = black3();
-        for (uint32_t i = 0; i < count; ++i) {
-            const MaterialData& child = materials[ids[i]];
-            if (child.type != kMulti) {
-                sum = sum + emitterRadiance(child, lightToTargetDir);
-            }
-        }
-        return sum / fmaxf(static_cast<float>(count), 1.0f);
-    }
-    return emitterRadiance(mat, lightToTargetDir);
-}
-
-__device__ inline float3 loadVertex(const float* vertices, uint32_t vertexIndex) {
-    return make_float3(
-        vertices[vertexIndex * 3 + 0],
-        vertices[vertexIndex * 3 + 1],
-        vertices[vertexIndex * 3 + 2]);
-}
-
-__device__ bool sampleEmissiveTriangle(
-    const ShadeKernelParams& params,
-    uint32_t& seed,
-    float3* outPosition,
-    float3* outNormal,
-    uint32_t* outMaterialId,
-    float* outPdfArea)
-{
-    if (params.indices == nullptr || params.vertices == nullptr || params.triangleMaterialIds == nullptr) {
-        return false;
-    }
-    if (params.numTriangles == 0 || params.numMaterials == 0) {
-        return false;
-    }
-
-    uint32_t chosenTri = 0;
-    uint32_t emissiveCount = 0;
-    for (uint32_t tri = 0; tri < params.numTriangles; ++tri) {
-        uint32_t matId = params.triangleMaterialIds[tri];
-        if (matId >= params.numMaterials) {
-            continue;
-        }
-        if (!isEmitterMaterial(params.materials[matId], params.materials, params.numMaterials)) {
-            continue;
-        }
-        ++emissiveCount;
-        if (randf(seed) < (1.0f / emissiveCount)) {
-            chosenTri = tri;
-        }
-    }
-
-    if (emissiveCount == 0) {
-        return false;
-    }
-
-    const uint32_t i0 = params.indices[chosenTri * 3 + 0];
-    const uint32_t i1 = params.indices[chosenTri * 3 + 1];
-    const uint32_t i2 = params.indices[chosenTri * 3 + 2];
-    float3 v0 = loadVertex(params.vertices, i0);
-    float3 v1 = loadVertex(params.vertices, i1);
-    float3 v2 = loadVertex(params.vertices, i2);
-
-    float3 e1 = v1 - v0;
-    float3 e2 = v2 - v0;
-    float3 triN = cross(e1, e2);
-    float area = 0.5f * length(triN);
-    if (area <= 1e-8f) {
-        return false;
-    }
-
-    float u = randf(seed);
-    float v = randf(seed);
-    float su = sqrtf(u);
-    float b0 = 1.0f - su;
-    float b1 = su * (1.0f - v);
-    float b2 = su * v;
-
-    *outPosition = v0 * b0 + v1 * b1 + v2 * b2;
-    *outNormal = normalize(triN);
-    *outMaterialId = params.triangleMaterialIds[chosenTri];
-    *outPdfArea = (1.0f / emissiveCount) * (1.0f / area);
-    return true;
-}
-
-__device__ inline void queueShadowRay(
-    RayState& ray,
-    const HitInfo& hit,
-    const float3& shadowDir,
-    float shadowDist,
-    const float3& pendingDirect,
-    const float3& nextOrigin,
-    const float3& nextDirection,
-    const float3& nextThroughput,
-    uint32_t terminateAfterShadow)
-{
-    ray.pendingDirect = pendingDirect;
-    ray.nextOrigin = nextOrigin;
-    ray.nextDirection = nextDirection;
-    ray.nextThroughput = nextThroughput;
-    ray.terminateAfterShadow = terminateAfterShadow;
-    const float3 offsetN = dot(shadowDir, hit.normal) > 0.0f ? hit.normal : -hit.normal;
-    ray.origin = hit.position + offsetN * kRayEps;
-    ray.direction = shadowDir;
-    ray.tMin = kRayEps;
-    ray.tMax = fmaxf(kRayEps * 2.0f, shadowDist - 2.0f * kRayEps);
-    ray.stage = RayState::Shadow;
-}
-
-__device__ inline void maybeRussianRoulette(RayState& ray, bool* terminate) {
-    *terminate = false;
-    if (ray.depth < 3) {
-        return;
-    }
-    float surviveProb = fminf(0.95f, fmaxf(0.2f, max3(ray.throughput)));
-    if (randf(ray.seed) > surviveProb) {
-        *terminate = true;
-        return;
-    }
-    ray.throughput = ray.throughput / surviveProb;
-}
-
-__device__ inline float iorToF0(float etaI, float etaT) {
-    float a = (etaT - etaI) / fmaxf(etaT + etaI, 1e-6f);
-    return a * a;
-}
-
-__device__ inline void ue4Params(const MaterialData& mat, float3* kd, float3* F0, float* alpha) {
-    float metallic = saturate(mat.metallic);
-    float roughness = fmaxf(0.03f, mat.roughness);
-    *alpha = roughness * roughness;
-    *F0 = lerp3(make_float3(0.04f, 0.04f, 0.04f), mat.baseColor, metallic);
-    *kd = mat.baseColor * (1.0f - metallic) * saturate(mat.occlusion);
-}
-
-__device__ inline void oldStyleParams(const MaterialData& mat, float3* kd, float3* F0, float* alpha) {
+__device__ inline void oldStyleParams(const optixw::MaterialData& mat, float3* kd, float3* F0, float* alpha) {
     *kd = mat.baseColor;
     *F0 = mat.specularColor;
-    float roughness = sqrtf(fmaxf(0.0005f, 1.0f - saturate(mat.glossiness)));
-    *alpha = roughness * roughness;
+    *alpha = 1.0f - mat.glossiness;
+    *alpha *= *alpha;
 }
 
-__device__ inline float3 evalGGXSpec(
-    float3 F0, float alpha, const float3& n, const float3& wo, const float3& wi)
-{
-    float NoV = fmaxf(0.0f, dot(n, wo));
-    float NoL = fmaxf(0.0f, dot(n, wi));
-    if (NoV <= 0.0f || NoL <= 0.0f) {
-        return black3();
-    }
-    float3 h = normalize(wi + wo);
-    float NoH = fmaxf(0.0f, dot(n, h));
-    float VoH = fmaxf(0.0f, dot(wo, h));
-    float D = ggxD(alpha, NoH);
-    float G = ggxG(alpha, NoV, NoL);
-    float3 F = schlickFresnel(VoH, F0);
-    return F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f));
-}
-
-__device__ inline bool isDeltaMaterial(
-    const MaterialData& mat,
-    const MaterialData* materials,
-    uint32_t numMaterials)
-{
-    if (mat.type == kMulti) {
-        uint32_t ids[4] = {};
-        uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
-        if (count == 0) {
-            return false;
-        }
-        for (uint32_t i = 0; i < count; ++i) {
-            const uint32_t t = materials[ids[i]].type;
-            if (!(t == kSpecularReflection || t == kSpecularScattering)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    return mat.type == kSpecularReflection || mat.type == kSpecularScattering;
+__device__ inline float materialAlpha(const optixw::MaterialData& mat) {
+    return mat.roughness * mat.roughness;
 }
 
 __device__ inline float3 evalMaterialBSDFSingle(
-    const MaterialData& inMat,
-    const HitInfo& hit,
-    const Texture2DData* textures,
+    const optixw::MaterialData& inMat,
+    const optixw::HitInfo& hit,
+    const optixw::Texture2DData* textures,
     uint32_t numTextures,
-    const float3& n, const float3& wo, const float3& wi)
-{
-    const MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
-    float NoV = dot(n, wo);
-    float NoL = dot(n, wi);
-    float absNoV = fabsf(NoV);
-    float absNoL = fabsf(NoL);
-    if (absNoV <= 0.0f || absNoL <= 0.0f) {
+    const float3& n,
+    const float3& wo,
+    const float3& wi
+) {
+    const optixw::MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
+    float NoL = fmaxf(0.0f, dot(n, wi));
+    float NoV = fmaxf(0.0f, dot(n, wo));
+    if (NoL <= 0.0f || NoV <= 0.0f) {
         return black3();
     }
 
     if (mat.type == kMatte) {
-        if (NoV <= 0.0f || NoL <= 0.0f) {
-            return black3();
-        }
-        return mat.baseColor * (1.0f / kPi);
+        return mat.baseColor * M_1_PI * NoL;
     }
 
     if (mat.type == kLambertianScattering) {
-        const float F = saturate(mat.specularF0 + (1.0f - mat.specularF0) * pow5(1.0f - absNoV));
-        const bool sameHemisphere = NoV * NoL > 0.0f;
-        return mat.baseColor * ((sameHemisphere ? F : (1.0f - F)) * (1.0f / kPi));
+        float cosNV = fabsf(dot(n, wo));
+        float F = saturate(mat.specularF0 + (1.0f - mat.specularF0) * pow5(1.0f - cosNV));
+        float3 diffuse = mat.baseColor * M_1_PI * NoL;
+        float3 specular = schlickFresnel(dot(n, normalize(wo + wi)), make_float3(F, F, F)) * NoL;
+        return diffuse + specular;
     }
 
     if (mat.type == kUE4) {
-        if (NoV <= 0.0f || NoL <= 0.0f) {
-            return black3();
-        }
         float3 kd, F0;
         float alpha;
         ue4Params(mat, &kd, &F0, &alpha);
-        return kd * (1.0f / kPi) + evalGGXSpec(F0, alpha, n, wo, wi);
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float D = ggxD(alpha, NoH);
+        float G = ggxG(alpha, NoV, NoL);
+        float3 F = schlickFresnel(VoH, F0);
+        float3 spec = F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f));
+        float3 diff = kd * M_1_PI;
+        return (diff + spec) * NoL;
     }
 
     if (mat.type == kOldStyle) {
-        if (NoV <= 0.0f || NoL <= 0.0f) {
-            return black3();
-        }
         float3 kd, F0;
         float alpha;
         oldStyleParams(mat, &kd, &F0, &alpha);
-        return kd * (1.0f / kPi) + evalGGXSpec(F0, alpha, n, wo, wi);
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float D = ggxD(alpha, NoH);
+        float G = ggxG(alpha, NoV, NoL);
+        float3 F = schlickFresnel(VoH, F0);
+        float3 spec = F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f));
+        float3 diff = kd * M_1_PI;
+        return (diff + spec) * NoL;
+    }
+
+    if (mat.type == kSpecularReflection) {
+        float3 H = normalize(wo + wi);
+        if (fabsf(dot(n, H)) < 0.999f) {
+            return black3();
+        }
+        float cosNV = fabsf(dot(n, wo));
+        float3 F = fresnelConductor(cosNV, mat.eta, mat.k) * mat.baseColor;
+        return F * NoL;
+    }
+
+    if (mat.type == kSpecularScattering) {
+        const bool inside = false;
+        float3 normal = inside ? -n : n;
+        float etaI = inside ? mat.iorInt : mat.iorExt;
+        float etaT = inside ? mat.iorExt : mat.iorInt;
+        float3 reflected = reflectDir(-wo, normal);
+        float3 refracted;
+        bool canRefract = refractDir(-wo, normal, etaI / etaT, &refracted);
+        if (dot(wi, reflected) > 0.999f) {
+            float cosNV = fabsf(dot(n, wo));
+            float Fr = dielectricFresnel(cosNV, etaI, etaT);
+            return mat.baseColor * Fr * NoL;
+        } else if (canRefract && dot(wi, refracted) > 0.999f) {
+            float cosNV = fabsf(dot(n, wo));
+            float Fr = dielectricFresnel(cosNV, etaI, etaT);
+            float etaScale = (etaI / etaT) * (etaI / etaT);
+            return mat.baseColor * (1.0f - Fr) * etaScale * NoL;
+        } else {
+            return black3();
+        }
     }
 
     if (mat.type == kMicrofacetReflection) {
-        if (NoV <= 0.0f || NoL <= 0.0f) {
-            return black3();
-        }
-        const float3 F0 = fresnelConductor(1.0f, mat.eta, mat.k) * mat.baseColor;
-        return evalGGXSpec(F0, materialAlpha(mat), n, wo, wi);
+        float3 F0 = fresnelConductor(1.0f, mat.eta, mat.k) * mat.baseColor;
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float alpha = materialAlpha(mat);
+        float D = ggxD(alpha, NoH);
+        float G = ggxG(alpha, NoV, NoL);
+        float3 F = schlickFresnel(VoH, F0);
+        return F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f)) * NoL;
     }
 
     if (mat.type == kMicrofacetScattering) {
-        float etaI = fmaxf(1.0f, mat.iorExt);
-        float etaT = fmaxf(1.01f, mat.iorInt);
-        float F0 = iorToF0(etaI, etaT);
-        if (NoV * NoL > 0.0f) {
-            if (NoV <= 0.0f || NoL <= 0.0f) {
-                return black3();
-            }
-            return evalGGXSpec(make_float3(F0, F0, F0), materialAlpha(mat), n, wo, wi) * mat.baseColor;
-        }
-
-        float F = saturate(F0 + (1.0f - F0) * pow5(1.0f - absNoV));
-        return mat.baseColor * ((1.0f - F) * (1.0f / kPi));
+        const bool inside = false;
+        float3 normal = inside ? -n : n;
+        float etaI = inside ? mat.iorInt : mat.iorExt;
+        float etaT = inside ? mat.iorExt : mat.iorInt;
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float cosNV = fabsf(dot(n, wo));
+        float Fr = dielectricFresnel(cosNV, etaI, etaT);
+        float alpha = materialAlpha(mat);
+        float D = ggxD(alpha, NoH);
+        float G = ggxG(alpha, NoV, NoL);
+        float3 F = schlickFresnel(VoH, make_float3(iorToF0(etaI, etaT), iorToF0(etaI, etaT), iorToF0(etaI, etaT)));
+        float3 spec = F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f));
+        float3 diff = mat.baseColor * M_1_PI;
+        return (diff + spec) * NoL;
     }
 
-    return black3();
+    return mat.baseColor * M_1_PI * NoL;
 }
 
 __device__ inline float3 evalMaterialBSDF(
-    const MaterialData& mat, const MaterialData* materials, uint32_t numMaterials,
-    const HitInfo& hit, const Texture2DData* textures, uint32_t numTextures,
-    const float3& n, const float3& wo, const float3& wi)
-{
+    const optixw::MaterialData& mat, const optixw::MaterialData* materials, uint32_t numMaterials,
+    const optixw::HitInfo& hit, const optixw::Texture2DData* textures, uint32_t numTextures,
+    const float3& n, const float3& wo, const float3& wi
+) {
     if (mat.type != kMulti) {
         return evalMaterialBSDFSingle(mat, hit, textures, numTextures, n, wo, wi);
     }
@@ -582,16 +484,127 @@ __device__ inline float3 evalMaterialBSDF(
     float3 sum = black3();
     uint32_t used = 0;
     for (uint32_t i = 0; i < count; ++i) {
-        const MaterialData& child = materials[ids[i]];
+        const optixw::MaterialData& child = materials[ids[i]];
         if (child.type == kMulti || child.type == kEnvironmentEmitter) {
             continue;
         }
-        sum = sum + evalMaterialBSDFSingle(child, hit, textures, numTextures, n, wo, wi);
+        float3 bsdf = evalMaterialBSDFSingle(child, hit, textures, numTextures, n, wo, wi);
+        sum = sum + bsdf;
         ++used;
     }
 
     if (used == 0) {
         return black3();
+    }
+    return sum / static_cast<float>(used);
+}
+
+__device__ inline float evalMaterialPDFSingle(
+    const optixw::MaterialData& inMat,
+    const optixw::HitInfo& hit,
+    const optixw::Texture2DData* textures,
+    uint32_t numTextures,
+    const float3& n,
+    const float3& wo,
+    const float3& wi
+) {
+    const optixw::MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
+    float NoL = fmaxf(0.0f, dot(n, wi));
+    float NoV = fmaxf(0.0f, dot(n, wo));
+    if (NoL <= 0.0f || NoV <= 0.0f) {
+        return 0.0f;
+    }
+
+    if (mat.type == kMatte) {
+        return NoL * M_1_PI;
+    }
+
+    if (mat.type == kLambertianScattering) {
+        return NoL * M_1_PI;
+    }
+
+    if (mat.type == kUE4) {
+        float3 kd, F0;
+        float alpha;
+        ue4Params(mat, &kd, &F0, &alpha);
+        float specProb = fmaxf(0.1f, fminf(0.9f, max3(F0)));
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float pdfH = ggxD(alpha, NoH) * NoH;
+        float pdfSpec = pdfH / (4.0f * VoH);
+        float pdfDiff = NoL * M_1_PI;
+        return specProb * pdfSpec + (1.0f - specProb) * pdfDiff;
+    }
+
+    if (mat.type == kOldStyle) {
+        float3 kd, F0;
+        float alpha;
+        oldStyleParams(mat, &kd, &F0, &alpha);
+        float specProb = fmaxf(0.1f, fminf(0.9f, max3(F0)));
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float pdfH = ggxD(alpha, NoH) * NoH;
+        float pdfSpec = pdfH / (4.0f * VoH);
+        float pdfDiff = NoL * M_1_PI;
+        return specProb * pdfSpec + (1.0f - specProb) * pdfDiff;
+    }
+
+    if (mat.type == kSpecularReflection || mat.type == kSpecularScattering) {
+        return 0.0f;
+    }
+
+    if (mat.type == kMicrofacetReflection) {
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float alpha = materialAlpha(mat);
+        float pdfH = ggxD(alpha, NoH) * NoH;
+        return pdfH / (4.0f * VoH);
+    }
+
+    if (mat.type == kMicrofacetScattering) {
+        float3 H = normalize(wo + wi);
+        float NoH = fmaxf(0.0f, dot(n, H));
+        float VoH = fmaxf(0.0f, dot(wo, H));
+        float alpha = materialAlpha(mat);
+        float pdfH = ggxD(alpha, NoH) * NoH;
+        return pdfH / (4.0f * VoH);
+    }
+
+    return NoL * M_1_PI;
+}
+
+__device__ inline float evalMaterialPDF(
+    const optixw::MaterialData& mat, const optixw::MaterialData* materials, uint32_t numMaterials,
+    const optixw::HitInfo& hit, const optixw::Texture2DData* textures, uint32_t numTextures,
+    const float3& n, const float3& wo, const float3& wi
+) {
+    if (mat.type != kMulti) {
+        return evalMaterialPDFSingle(mat, hit, textures, numTextures, n, wo, wi);
+    }
+
+    uint32_t ids[4] = {};
+    uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
+    if (count == 0) {
+        return 0.0f;
+    }
+
+    float sum = 0.0f;
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const optixw::MaterialData& child = materials[ids[i]];
+        if (child.type == kMulti || child.type == kEnvironmentEmitter) {
+            continue;
+        }
+        float pdf = evalMaterialPDFSingle(child, hit, textures, numTextures, n, wo, wi);
+        sum = sum + pdf;
+        ++used;
+    }
+
+    if (used == 0) {
+        return 0.0f;
     }
     return sum / static_cast<float>(used);
 }
@@ -609,8 +622,8 @@ __device__ inline BSDFSample sampleDiffuse(const float3& coeff, const float3& n,
 }
 
 __device__ inline BSDFSample sampleGGXSpecular(
-    const float3& n, const float3& wo, float3 F0, float alpha, uint32_t& seed)
-{
+    const float3& n, const float3& wo, float3 F0, float alpha, uint32_t& seed
+) {
     BSDFSample s = {};
     float pdfH = 0.0f;
     float3 h = sampleGGXHalf(n, alpha, seed, &pdfH);
@@ -627,27 +640,29 @@ __device__ inline BSDFSample sampleGGXSpecular(
     float D = ggxD(alpha, NoH);
     float G = ggxG(alpha, NoV, NoL);
     float3 F = schlickFresnel(VoH, F0);
-    float3 f = F * (D * G / fmaxf(4.0f * NoV * NoL, 1e-6f));
+    float denom = fmaxf(4.0f * NoV * NoL, 1e-6f);
+    float3 f = make_float3(F.x * (D * G / denom), F.y * (D * G / denom), F.z * (D * G / denom));
     float pdf = pdfH / fmaxf(4.0f * VoH, 1e-6f);
     s.wi = wi;
     s.pdf = pdf;
-    s.weight = f * (NoL / fmaxf(pdf, 1e-8f));
+    float weightDenom = fmaxf(pdf, 1e-8f);
+    s.weight = make_float3(f.x * (NoL / weightDenom), f.y * (NoL / weightDenom), f.z * (NoL / weightDenom));
     s.valid = (pdf > 1e-8f);
     s.isDelta = 0;
     return s;
 }
 
 __device__ inline BSDFSample sampleMaterialSingle(
-    const MaterialData& inMat,
-    const Texture2DData* textures,
+    const optixw::MaterialData& inMat,
+    const optixw::Texture2DData* textures,
     uint32_t numTextures,
-    const HitInfo& hit,
-    RayState& ray,
+    const optixw::HitInfo& hit,
+    optixw::RayState& ray,
     const float3& wo,
-    uint32_t& seed)
-{
+    uint32_t& seed
+) {
     BSDFSample s = {};
-    const MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
+    const optixw::MaterialData mat = resolveMaterial(inMat, hit, textures, numTextures);
     const float3 n = hit.normal;
 
     if (mat.type == kMatte) {
@@ -674,7 +689,8 @@ __device__ inline BSDFSample sampleMaterialSingle(
         }
 
         s.wi = wiTransmit;
-        s.weight = mat.baseColor * ((1.0f - F) / fmaxf(1.0f - reflectProb, 1e-6f));
+        float denom = fmaxf(1.0f - reflectProb, 1e-6f);
+        s.weight = mat.baseColor * ((1.0f - F) / denom);
         s.pdf = pdf * (1.0f - reflectProb);
         s.valid = (s.pdf > 1e-8f);
         s.isDelta = 0;
@@ -724,18 +740,20 @@ __device__ inline BSDFSample sampleMaterialSingle(
 
     if (mat.type == kSpecularScattering) {
         const bool inside = ray.insideMedium != 0;
+        float3 normal = inside ? -n : n;
         float etaI = inside ? mat.iorInt : mat.iorExt;
         float etaT = inside ? mat.iorExt : mat.iorInt;
-        float Fr = dielectricFresnel(fabsf(dot(n, wo)), etaI, etaT);
-        float3 reflected = reflectDir(-wo, n);
+        float Fr = dielectricFresnel(fabsf(dot(normal, wo)), etaI, etaT);
+        float3 reflected = reflectDir(-wo, normal);
         float3 refracted = reflected;
-        bool canRefract = refractDir(-wo, n, etaI / etaT, &refracted);
+        bool canRefract = refractDir(-wo, normal, etaI / etaT, &refracted);
 
         float reflectProb = canRefract ? saturate(Fr) : 1.0f;
         bool chooseRefl = !canRefract || randf(seed) < reflectProb;
         if (chooseRefl) {
             s.wi = reflected;
-            s.weight = mat.baseColor * (Fr / fmaxf(reflectProb, 1e-6f));
+            float denom = fmaxf(reflectProb, 1e-6f);
+            s.weight = mat.baseColor * (Fr / denom);
         } else {
             float transProb = fmaxf(1.0f - reflectProb, 1e-6f);
             float etaScale = (etaI / etaT) * (etaI / etaT);
@@ -756,22 +774,23 @@ __device__ inline BSDFSample sampleMaterialSingle(
 
     if (mat.type == kMicrofacetScattering) {
         const bool inside = ray.insideMedium != 0;
+        float3 normal = inside ? -n : n;
         float etaI = inside ? mat.iorInt : mat.iorExt;
         float etaT = inside ? mat.iorExt : mat.iorInt;
-        float Fr = dielectricFresnel(fabsf(dot(n, wo)), etaI, etaT);
+        float Fr = dielectricFresnel(fabsf(dot(normal, wo)), etaI, etaT);
         float reflectProb = fminf(0.95f, fmaxf(0.05f, Fr));
 
         if (randf(seed) < reflectProb) {
             float F0 = iorToF0(etaI, etaT);
-            s = sampleGGXSpecular(n, wo, make_float3(F0, F0, F0), materialAlpha(mat), seed);
+            s = sampleGGXSpecular(normal, wo, make_float3(F0, F0, F0), materialAlpha(mat), seed);
             s.weight = s.weight * mat.baseColor / reflectProb;
             return s;
         }
 
         float3 refracted;
-        bool canRefract = refractDir(-wo, n, etaI / etaT, &refracted);
+        bool canRefract = refractDir(-wo, normal, etaI / etaT, &refracted);
         if (!canRefract) {
-            s.wi = reflectDir(-wo, n);
+            s.wi = reflectDir(-wo, normal);
             s.weight = mat.baseColor;
             s.pdf = 1.0f;
             s.isDelta = 1;
@@ -782,7 +801,8 @@ __device__ inline BSDFSample sampleMaterialSingle(
         if (mat.roughness <= 0.02f) {
             float etaScale = (etaI / etaT) * (etaI / etaT);
             s.wi = refracted;
-            s.weight = mat.baseColor * ((1.0f - Fr) * etaScale / fmaxf(1.0f - reflectProb, 1e-6f));
+            float denom = fmaxf(1.0f - reflectProb, 1e-6f);
+            s.weight = mat.baseColor * ((1.0f - Fr) * etaScale / denom);
             s.pdf = 1.0f;
             s.isDelta = 1;
             s.valid = 1;
@@ -793,13 +813,14 @@ __device__ inline BSDFSample sampleMaterialSingle(
         float pdf = 0.0f;
         float3 local = sampleCosineHemisphere(randf(seed), randf(seed), &pdf);
         float3 lobe = normalize(toWorld(local, refracted));
-        if (dot(lobe, n) * dot(wo, n) > 0.0f) {
+        if (dot(lobe, normal) * dot(wo, normal) > 0.0f) {
             lobe = -lobe;
         }
 
         s.wi = lobe;
         s.pdf = pdf * (1.0f - reflectProb);
-        s.weight = mat.baseColor * ((1.0f - Fr) / fmaxf(1.0f - reflectProb, 1e-6f));
+        float denom = fmaxf(1.0f - reflectProb, 1e-6f);
+        s.weight = mat.baseColor * ((1.0f - Fr) / denom);
         s.isDelta = 0;
         s.valid = (s.pdf > 1e-8f);
         ray.insideMedium = inside ? 0u : 1u;
@@ -810,16 +831,16 @@ __device__ inline BSDFSample sampleMaterialSingle(
 }
 
 __device__ inline BSDFSample sampleMaterial(
-    const MaterialData& mat,
-    const MaterialData* materials,
+    const optixw::MaterialData& mat,
+    const optixw::MaterialData* materials,
     uint32_t numMaterials,
-    const Texture2DData* textures,
+    const optixw::Texture2DData* textures,
     uint32_t numTextures,
-    const HitInfo& hit,
-    RayState& ray,
+    const optixw::HitInfo& hit,
+    optixw::RayState& ray,
     const float3& wo,
-    uint32_t& seed)
-{
+    uint32_t& seed
+) {
     if (mat.type != kMulti) {
         return sampleMaterialSingle(mat, textures, numTextures, hit, ray, wo, seed);
     }
@@ -827,21 +848,21 @@ __device__ inline BSDFSample sampleMaterial(
     uint32_t ids[4] = {};
     uint32_t count = gatherMultiChildren(mat, materials, numMaterials, ids);
     if (count == 0) {
-        const MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
+        const optixw::MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
         return sampleDiffuse(resolved.baseColor, hit.normal, seed);
     }
 
     uint32_t validIds[4] = {};
     uint32_t validCount = 0;
     for (uint32_t i = 0; i < count; ++i) {
-        const MaterialData& child = materials[ids[i]];
+        const optixw::MaterialData& child = materials[ids[i]];
         if (child.type == kMulti || child.type == kEnvironmentEmitter) {
             continue;
         }
         validIds[validCount++] = ids[i];
     }
     if (validCount == 0) {
-        const MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
+        const optixw::MaterialData resolved = resolveMaterial(mat, hit, textures, numTextures);
         return sampleDiffuse(resolved.baseColor, hit.normal, seed);
     }
 
@@ -853,198 +874,244 @@ __device__ inline BSDFSample sampleMaterial(
     return inner;
 }
 
-extern "C" __global__ void shade(ShadeKernelParams params) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= params.numActive) {
-        return;
+__device__ inline float3 sampleEmissiveTriangle(
+    const float* vertices,
+    const uint32_t* indices,
+    const optixw::MaterialData* materials,
+    uint32_t materialId,
+    const float3& hitPoint,
+    uint32_t& seed,
+    float* pdf
+) {
+    if (materials == nullptr || materialId >= 10000) {
+        *pdf = 0.0f;
+        return black3();
     }
 
-    uint32_t rayIndex = params.activeIndices[idx];
-    RayState& ray = params.rayPool[rayIndex];
+    const optixw::MaterialData& mat = materials[materialId];
+    if (mat.type != kDiffuseEmitter && mat.type != kSpecularEmitter) {
+        *pdf = 0.0f;
+        return black3();
+    }
 
-    // 无论光线处于什么阶段，都累积其 radiance
-    if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
+    float u1 = randf(seed);
+    float u2 = randf(seed);
+    float su1 = sqrtf(u1);
+    float3 barycentric = make_float3(1.0f - su1, u2 * su1, 1.0f - su1 - u2 * su1);
+    
+    if (indices == nullptr || vertices == nullptr) {
+        *pdf = 0.0f;
+        return black3();
     }
     
-    if (ray.stage == RayState::Terminated) {
-        return;
+    float3 v0 = make_float3(vertices[0], vertices[1], vertices[2]);
+    float3 v1 = make_float3(vertices[3], vertices[4], vertices[5]);
+    float3 v2 = make_float3(vertices[6], vertices[7], vertices[8]);
+    float3 p = barycentric.x * v0 + barycentric.y * v1 + barycentric.z * v2;
+    float3 wi = normalize(p - hitPoint);
+
+    float3 e1 = v1 - v0;
+    float3 e2 = v2 - v0;
+    float3 n = cross(e1, e2);
+    float area = 0.5f * length(n);
+    n = normalize(n);
+
+    float NoL = fmaxf(0.0f, dot(n, -wi));
+    if (NoL <= 0.0f) {
+        *pdf = 0.0f;
+        return black3();
     }
-    if (ray.stage != RayState::Shade) {
+
+    float distanceSquared = dot(p - hitPoint, p - hitPoint);
+    *pdf = distanceSquared / (NoL * area);
+
+    if (mat.type == kDiffuseEmitter) {
+        return mat.baseColor * mat.emitterScale;
+    } else {
+        float3 F = schlickFresnel(dot(n, -wi), mat.baseColor);
+        return F * mat.emitterScale;
+    }
+}
+
+__device__ inline float3 sampleEnvironment(
+    const optixw::EnvironmentMappingData& env,
+    const float3& hitPoint,
+    uint32_t& seed,
+    float* pdf
+) {
+    if (env.environmentMap == nullptr || env.environmentMapWidth == 0 || env.environmentMapHeight == 0) {
+        *pdf = 0.0f;
+        return black3();
+    }
+
+    float u = randf(seed);
+    float v = randf(seed);
+    uint32_t x = static_cast<uint32_t>(u * env.environmentMapWidth);
+    uint32_t y = static_cast<uint32_t>(v * env.environmentMapHeight);
+    uint32_t idx = y * env.environmentMapWidth + x;
+    if (idx >= env.environmentMapWidth * env.environmentMapHeight) {
+        *pdf = 0.0f;
+        return black3();
+    }
+
+    float4 texel = env.environmentMap[idx];
+    float3 color = srgbToLinear(make_float3(texel.x, texel.y, texel.z)) * env.environmentMapScale;
+
+    float theta = v * M_PI;
+    float phi = u * 2.0f * M_PI;
+    float3 wi = make_float3(
+        sinf(theta) * cosf(phi),
+        sinf(theta) * sinf(phi),
+        cosf(theta)
+    );
+
+    float sinTheta = sinf(theta);
+    if (sinTheta < 1e-8f) {
+        *pdf = 0.0f;
+        return black3();
+    }
+
+    *pdf = 1.0f / (2.0f * M_PI * M_PI * sinTheta);
+    return color;
+}
+
+__device__ inline uint32_t tea(uint32_t val0, uint32_t val1) {
+    uint32_t v0 = val0;
+    uint32_t v1 = val1;
+    uint32_t s0 = 0;
+
+    for (int n = 0; n < 4; n++) {
+        s0 += 0x9e3779b9;
+        v0 += ((v1 << 4) + 0xa341316c) ^ (v1 + s0) ^ ((v1 >> 5) + 0xc8013ea4);
+        v1 += ((v0 << 4) + 0xad90777d) ^ (v0 + s0) ^ ((v0 >> 5) + 0x7e95761e);
+    }
+
+    return v0;
+}
+
+extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= params->renderBuffers.numActive) {
         return;
     }
 
-    if (params.materials == nullptr || params.numMaterials == 0) {
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
-        return;
-    }
+    uint32_t rayIndex = params->renderBuffers.activeIndices[idx];
+    optixw::RayState& ray = params->renderBuffers.rayPool[rayIndex];
 
-    const HitInfo& hit = params.hitBuffer[rayIndex];
-    if (hit.materialId >= params.numMaterials) {
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
-        return;
-    }
-
-    const MaterialData& mat = params.materials[hit.materialId];
-    const MaterialData resolvedMat = resolveMaterial(mat, hit, params.textures, params.numTextures);
-
-    // record guide features for the denoiser on the first bounce only.  we
-    // always write them if the pointers are non-null; they are allocated by
-    // the host when denoising is enabled.  normal is remapped to [0,1] space
-    // because OptiX expects positive values in the guide layer.
-    if (ray.depth == 0) {
-        if (params.albedoBuffer) {
-            params.albedoBuffer[ray.pixelIndex] = resolvedMat.baseColor;
+    if (ray.stage == optixw::RayState::Terminated) {
+        if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
+            params->renderBuffers.accumBuffer[ray.pixelIndex] =
+                params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
         }
-        if (params.normalBuffer) {
-            float3 n = hit.normal;
-            // encode unit normal into 0..1
-            params.normalBuffer[ray.pixelIndex] = make_float3(
-                n.x * 0.5f + 0.5f,
-                n.y * 0.5f + 0.5f,
-                n.z * 0.5f + 0.5f
-            );
-        }
+        return;
     }
-
-    if (isEmitterMaterial(resolvedMat, params.materials, params.numMaterials)) {
-        float3 Le = emitterRadianceResolved(resolvedMat, params.materials, params.numMaterials, -ray.direction);
-        ray.radiance = ray.radiance + ray.throughput * Le;
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
+    if (ray.stage != optixw::RayState::Shade) {
         return;
     }
 
-    const float3 wo = -ray.direction;
-    float3 directContribution = black3();
-    bool hasDirectSample = false;
-    float3 shadowWi = black3();
-    float shadowDist = 0.0f;
+    if (params->materialsTextures.materials == nullptr || params->materialsTextures.numMaterials == 0) {
+        ray.stage = optixw::RayState::Terminated;
+        return;
+    }
 
-    BSDFSample bs = sampleMaterial(
-        resolvedMat,
-        params.materials,
-        params.numMaterials,
-        params.textures,
-        params.numTextures,
+    optixw::HitInfo hit = params->renderBuffers.hitBuffer[rayIndex];
+    if (hit.materialId >= params->materialsTextures.numMaterials) {
+        ray.stage = optixw::RayState::Terminated;
+        return;
+    }
+    const optixw::MaterialData& mat = params->materialsTextures.materials[hit.materialId];
+
+    if (mat.type == kDiffuseEmitter || mat.type == kSpecularEmitter) {
+        if (ray.depth == 0) {
+            ray.radiance = mat.baseColor * mat.emitterScale;
+        } else {
+            ray.radiance = black3();
+        }
+        ray.stage = optixw::RayState::Terminated;
+        return;
+    }
+
+    float3 wo = normalize(-ray.origin + hit.position);
+    uint32_t seed = tea(rayIndex, 0);
+
+    BSDFSample bsdf = sampleMaterial(
+        mat,
+        params->materialsTextures.materials,
+        params->materialsTextures.numMaterials,
+        params->materialsTextures.textures,
+        params->materialsTextures.numTextures,
         hit,
         ray,
         wo,
-        ray.seed);
-    if (!bs.valid) {
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
+        seed
+    );
+
+    if (!bsdf.valid) {
+        ray.stage = optixw::RayState::Terminated;
+        ray.radiance = black3();
         return;
     }
 
-    // NEE with true visibility for non-delta material families.
-    if (!bs.isDelta && !isDeltaMaterial(resolvedMat, params.materials, params.numMaterials)) {
-        float3 lightPos, lightNormal;
-        uint32_t lightMatId = 0;
-        float lightPdfArea = 0.0f;
-        if (sampleEmissiveTriangle(params, ray.seed, &lightPos, &lightNormal, &lightMatId, &lightPdfArea)) {
-            float3 toLight = lightPos - hit.position;
-            float dist2 = dot(toLight, toLight);
-            if (dist2 > 1e-8f && lightPdfArea > 1e-8f && lightMatId < params.numMaterials) {
-                shadowWi = normalize(toLight);
-                float cosSurface = fmaxf(0.0f, dot(hit.normal, shadowWi));
-                float cosLight = fmaxf(0.0f, dot(lightNormal, -shadowWi));
-                if (cosSurface > 0.0f && cosLight > 0.0f) {
-                    const MaterialData& lightMat = params.materials[lightMatId];
-                    float3 Le = lightMat.emission * fmaxf(lightMat.emitterScale, 1.0f);
-                    if (hasValue(Le)) {
-                        float3 f = evalMaterialBSDF(
-                            resolvedMat,
-                            params.materials,
-                            params.numMaterials,
-                            hit,
-                            params.textures,
-                            params.numTextures,
-                            hit.normal,
-                            wo,
-                            shadowWi);
-                        if (hasValue(f)) {
-                            float geom = (cosSurface * cosLight) / dist2;
-                            directContribution = ray.throughput * f * Le * (geom / lightPdfArea);
-                            hasDirectSample = hasValue(directContribution);
-                            shadowDist = sqrtf(dist2);
-                        }
-                    }
-                }
-            }
-        }
+    const float3 n = hit.normal;
+    float noL = fmaxf(0.0f, dot(n, bsdf.wi));
+    if (noL <= 0.0f) {
+        ray.stage = optixw::RayState::Terminated;
+        ray.radiance = black3();
+        return;
+    }
 
-        if (!hasDirectSample &&
-            (hasValue(params.environmentRadiance) ||
-             (params.environmentMap != nullptr && params.environmentMapWidth > 0 && params.environmentMapHeight > 0))) {
-            const float u1 = randf(ray.seed);
-            const float u2 = randf(ray.seed);
-            const float z = 1.0f - 2.0f * u1;
-            const float r = sqrtf(fmaxf(0.0f, 1.0f - z * z));
-            const float phi = 2.0f * kPi * u2;
-            shadowWi = make_float3(r * cosf(phi), z, r * sinf(phi));
-            const float cosSurface = fmaxf(0.0f, dot(hit.normal, shadowWi));
-            if (cosSurface > 0.0f) {
-                const float3 Le = sampleEnvironment(params, shadowWi);
-                if (hasValue(Le)) {
-                    const float3 f = evalMaterialBSDF(
-                        resolvedMat,
-                        params.materials,
-                        params.numMaterials,
-                        hit,
-                        params.textures,
-                        params.numTextures,
-                        hit.normal,
-                        wo,
-                        shadowWi);
-                    if (hasValue(f)) {
-                        const float pdf = 1.0f / (4.0f * kPi);
-                        directContribution = ray.throughput * f * Le * (cosSurface / fmaxf(pdf, 1e-6f));
-                        hasDirectSample = hasValue(directContribution);
-                        shadowDist = 1.0e20f;
-                    }
-                }
+    float3 radiance = black3();
+    const int ENV_SAMPLES = 2;
+    for (int i = 0; i < ENV_SAMPLES; ++i) {
+        float envPdf = 0.0f;
+        float3 envColor = sampleEnvironment(params->environment, hit.position, seed, &envPdf);
+        if (envPdf > 1e-8f) {
+            float3 envWi = bsdf.wi;
+            float3 bsdfVal = evalMaterialBSDF(
+                mat,
+                params->materialsTextures.materials,
+                params->materialsTextures.numMaterials,
+                hit,
+                params->materialsTextures.textures,
+                params->materialsTextures.numTextures,
+                n,
+                wo,
+                envWi
+            );
+            float bsdfPdf = evalMaterialPDF(
+                mat,
+                params->materialsTextures.materials,
+                params->materialsTextures.numMaterials,
+                hit,
+                params->materialsTextures.textures,
+                params->materialsTextures.numTextures,
+                n,
+                wo,
+                envWi
+            );
+            if (bsdfPdf > 1e-8f) {
+                float weight = envPdf / (envPdf + bsdfPdf);
+                float3 temp = make_float3(envColor.x * bsdfVal.x, envColor.y * bsdfVal.y, envColor.z * bsdfVal.z);
+                temp = temp * weight / envPdf;
+                radiance = radiance + temp;
             }
         }
     }
 
-    float3 nextThroughput = ray.throughput * bs.weight;
-    float3 offsetN = dot(bs.wi, hit.normal) > 0.0f ? hit.normal : -hit.normal;
-    float3 nextOrigin = hit.position + offsetN * kRayEps;
-    float3 nextDirection = bs.wi;
-
-    ray.throughput = nextThroughput;
+    ray.origin = hit.position;
+    ray.direction = bsdf.wi;
+    float3 temp = make_float3(radiance.x * bsdf.weight.x, radiance.y * bsdf.weight.y, radiance.z * bsdf.weight.z);
+    ray.radiance = temp;
     ray.depth++;
 
-    bool terminateIndirect = false;
-    maybeRussianRoulette(ray, &terminateIndirect);
-    nextThroughput = ray.throughput;
-
-    if (terminateIndirect) {
-        if (hasDirectSample) {
-            queueShadowRay(
-                ray, hit, shadowWi, shadowDist, directContribution,
-                ray.origin, ray.direction, ray.throughput, 1);
+    if (ray.depth > 10) {
+        float continueProb = fminf(0.5f, max3(ray.radiance));
+        if (randf(seed) > continueProb) {
+            ray.stage = optixw::RayState::Terminated;
             return;
         }
-        ray.stage = RayState::Terminated;
-        params.accumBuffer[ray.pixelIndex] = params.accumBuffer[ray.pixelIndex] + ray.radiance;
-        return;
+        ray.radiance = ray.radiance / continueProb;
     }
 
-    if (hasDirectSample) {
-        queueShadowRay(
-            ray, hit, shadowWi, shadowDist, directContribution,
-            nextOrigin, nextDirection, nextThroughput, 0);
-        return;
-    }
-
-    ray.origin = nextOrigin;
-    ray.direction = nextDirection;
-    ray.throughput = nextThroughput;
-    ray.tMin = kRayEps;
-    ray.tMax = 1e20f;
-    ray.stage = RayState::Trace;
+    ray.stage = optixw::RayState::Trace;
 }

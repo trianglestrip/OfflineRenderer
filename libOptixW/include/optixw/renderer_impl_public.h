@@ -25,7 +25,7 @@ public:
 
     // Wavefront queues
     WavefrontBuffers wavefrontBuffers;
-    RenderAccumBuffers accumBuffers;
+    RenderAccumBuffers accumulationBuffers;
     MergeBuffers mergeBuffers;
     LaunchParamsBuffer launchParamsBuffer;
     MaterialTextureBuffers materialTextureBuffers;
@@ -39,18 +39,11 @@ public:
 
     uint32_t numPixels;
     uint32_t maxRays;
-    float3 environmentRadiance;
-    EnvironmentMap environmentMap;
+    EnvironmentData environmentData;
 
     bool pipelineCreated;
 
-    // Light buffers
-    struct LightBuffers {
-        CUdeviceptr d_pointLights;
-        CUdeviceptr d_areaLights;
-        uint32_t numPointLights;
-        uint32_t numAreaLights;
-    } lightBuffers;
+    LightBuffers lightBuffers;
 
     // Task scheduler for CPU-side parallelism
     class TaskScheduler* scheduler;

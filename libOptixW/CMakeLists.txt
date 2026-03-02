@@ -101,7 +101,7 @@ set(INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OptiX_INSTALL_DIR}/include
     ${CUDAToolkit_INCLUDE_DIRS}
-    "${CMAKE_SOURCE_DIR}/ext/taskflow"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/taskflow"
 )
 
 message(STATUS "Include directories: ${INCLUDE_DIRECTORIES}")
@@ -120,7 +120,7 @@ if(NOT Taskflow_FOUND)
     # 如果找不到预安装的Taskflow，则手动指定路径
     message(STATUS "Taskflow not found via find_package, using ext/taskflow")
     # 添加Taskflow的头文件路径
-    list(APPEND INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/ext/taskflow")
+    list(APPEND INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include/taskflow")
     # 不在target_link_libraries中添加Taskflow，因为它是头文件库
 else()
     message(STATUS "Found Taskflow: ${Taskflow_VERSION}")

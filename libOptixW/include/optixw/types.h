@@ -37,6 +37,13 @@ struct RayState {
     uint32_t materialId;
     uint32_t seed;      // Random seed
     
+    float initImportance;  // Initial path importance for Russian Roulette
+    
+    // MIS data for BSDF sampling hit light
+    float prevBsdfPdf;
+    float prevLightPdf;
+    uint32_t prevDeltaSample;
+    
     enum Stage : uint32_t {
         GeneratePrimary = 0,
         Trace = 1,
@@ -504,6 +511,16 @@ struct DenoiserParamsInternal {
     bool setup = false;
 };
 
+// 环境数据
+struct EnvironmentData {
+    EnvironmentMap map;
+    float3 radiance;
+
+#ifndef __CUDACC__
+    EnvironmentData() : radiance{0.0f, 0.0f, 0.0f} {}
+#endif
+};
+
 // 管线程序组
 struct PipelineProgramGroups {
     OptixProgramGroup raygenPG = nullptr;
@@ -547,6 +564,21 @@ struct KernelModules {
         if (compactModule) { cuModuleUnload(compactModule); compactModule = nullptr; }
         if (scaleModule) { cuModuleUnload(scaleModule); scaleModule = nullptr; }
         if (mergeModule) { cuModuleUnload(mergeModule); mergeModule = nullptr; }
+    }
+#endif
+};
+
+// 光源缓冲
+struct LightBuffers {
+    CUdeviceptr d_pointLights = 0;
+    CUdeviceptr d_areaLights = 0;
+    uint32_t numPointLights = 0;
+    uint32_t numAreaLights = 0;
+
+#ifndef __CUDACC__
+    void free() {
+        d_pointLights = 0;
+        d_areaLights = 0;
     }
 #endif
 };
@@ -670,5 +702,63 @@ struct TextureLoadBatchParams {
     TextureLoadBatchParams() : decodeSRGB(true) {}
 };
 #endif
+
+// ==================== 设备端参数结构体（主机和设备都可用）====================
+
+// 几何数据缓冲
+struct GeometryBuffers {
+    const float* vertices;
+    const float* texcoords;
+    const uint32_t* indices;
+    const uint32_t* triangleMaterialIds;
+};
+
+// 材质纹理数据
+struct MaterialTextureData {
+    const MaterialData* materials;
+    const Texture2DData* textures;
+    uint32_t numMaterials;
+    uint32_t numTextures;
+    uint32_t numTriangles;
+};
+
+// 光照数据
+struct LightingData {
+    const PointLightData* pointLights;
+    const AreaLightData* areaLights;
+    uint32_t numPointLights;
+    uint32_t numAreaLights;
+};
+
+// 环境映射数据
+struct EnvironmentMappingData {
+    const float4* environmentMap;
+    uint32_t environmentMapWidth;
+    uint32_t environmentMapHeight;
+    float environmentMapScale;
+    float3 environmentRadiance;
+};
+
+// 渲染缓冲数据（只读）
+struct RenderBufferDataRO {
+    RayState* rayPool;
+    const uint32_t* activeIndices;
+    const HitInfo* hitBuffer;
+    float3* accumBuffer;
+    float3* albedoBuffer;
+    float3* normalBuffer;
+    uint32_t numActive;
+};
+
+// 渲染缓冲数据（读写）
+struct RenderBufferDataRW {
+    RayState* rayPool;
+    uint32_t* activeIndices;
+    HitInfo* hitBuffer;
+    float3* accumBuffer;
+    float3* albedoBuffer;
+    float3* normalBuffer;
+    uint32_t numActive;
+};
 
 } // namespace optixw

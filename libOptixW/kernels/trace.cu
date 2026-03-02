@@ -17,60 +17,74 @@ __device__ inline float wrap01(float x) {
 }
 
 __device__ inline float3 sampleEnvironment(const float3& dir) {
-    if (params.environmentMap == nullptr || params.environmentMapWidth == 0 || params.environmentMapHeight == 0) {
-        return params.environmentRadiance;
+    if (params.environment.environmentMap == nullptr || 
+        params.environment.environmentMapWidth == 0 || 
+        params.environment.environmentMapHeight == 0) {
+        return params.environment.environmentRadiance;
     }
 
     const float3 d = normalize(dir);
     const float u = wrap01(atan2f(d.z, d.x) * (0.5f / kPi) + 0.5f);
     const float v = acosf(fminf(1.0f, fmaxf(-1.0f, d.y))) / kPi;
-    const uint32_t x = min(static_cast<uint32_t>(u * params.environmentMapWidth), params.environmentMapWidth - 1u);
-    const uint32_t y = min(static_cast<uint32_t>(v * params.environmentMapHeight), params.environmentMapHeight - 1u);
-    const float4 c = params.environmentMap[y * params.environmentMapWidth + x];
-    return make_float3(c.x, c.y, c.z) * fmaxf(params.environmentMapScale, 0.0f);
+    const uint32_t x = min(static_cast<uint32_t>(u * params.environment.environmentMapWidth), 
+                          params.environment.environmentMapWidth - 1u);
+    const uint32_t y = min(static_cast<uint32_t>(v * params.environment.environmentMapHeight), 
+                          params.environment.environmentMapHeight - 1u);
+    const float4 c = params.environment.environmentMap[y * params.environment.environmentMapWidth + x];
+    return make_float3(c.x, c.y, c.z) * fmaxf(params.environment.environmentMapScale, 0.0f);
 }
 
-// Raygen program for tracing
 extern "C" __global__ void __raygen__trace() {
     const uint32_t idx = optixGetLaunchIndex().x;
     if (idx >= params.numActive) return;
     
-    const uint32_t rayIndex = params.activeIndices[idx];
-    RayState& ray = params.rayPool[rayIndex];
+    const uint32_t rayIndex = params.renderBuffers.activeIndices[idx];
+    RayState& ray = params.renderBuffers.rayPool[rayIndex];
     
-    // Always initialize the ray for each sample
-    // Pixel coordinates
-    uint32_t px = rayIndex % params.width;
-    uint32_t py = rayIndex / params.width;
+    if (ray.stage == RayState::Trace) {
+        if (ray.depth == 0) {
+            uint32_t px = rayIndex % params.width;
+            uint32_t py = rayIndex / params.width;
+            
+            // 使用分层采样，提高采样效率
+            uint32_t seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
+            
+            // 生成均匀分布的采样点
+            float r1 = (float)(seed >> 8) / 16777216.0f;
+            seed = seed * 1664525u + 1013904223u;
+            float r2 = (float)(seed >> 8) / 16777216.0f;
+            
+            float ndcX = (2.0f * (px + r1) / params.width - 1.0f) * params.camera.aspect;
+            float ndcY = 1.0f - 2.0f * (py + r2) / params.height;
+            
+            float3 rayDir = params.camera.forward + 
+                           params.camera.right * ndcX * params.camera.tanHalfFovY +
+                           params.camera.up * ndcY * params.camera.tanHalfFovY;
+            rayDir = normalize(rayDir);
+            
+            ray.origin = params.camera.position;
+            ray.direction = rayDir;
+            ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
+            ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+            ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+            ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
+            ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
+            ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
+            ray.pixelIndex = rayIndex;
+            ray.depth = 0;
+            ray.stage = RayState::Trace;
+            ray.terminateAfterShadow = 0;
+            ray.insideMedium = 0;
+            ray.seed = seed;
+            ray.initImportance = 1.0f;
+            ray.prevBsdfPdf = 0.0f;
+            ray.prevLightPdf = 0.0f;
+            ray.prevDeltaSample = 0;
+            ray.tMin = 0.001f;
+            ray.tMax = 1e20f;
+        }
+    }
     
-    // NDC coordinates [-1, 1]
-    float ndcX = (2.0f * (px + 0.5f) / params.width - 1.0f) * params.camera.aspect;
-    float ndcY = 1.0f - 2.0f * (py + 0.5f) / params.height;
-    
-    // Ray direction
-    float3 rayDir = params.camera.forward + 
-                   params.camera.right * ndcX * params.camera.tanHalfFovY +
-                   params.camera.up * ndcY * params.camera.tanHalfFovY;
-    rayDir = normalize(rayDir);
-    
-    ray.origin = params.camera.position;
-    ray.direction = rayDir;
-    ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
-    ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
-    ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
-    ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
-    ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
-    ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
-    ray.pixelIndex = rayIndex;
-    ray.depth = 0;
-    ray.stage = RayState::Trace;
-    ray.terminateAfterShadow = 0;
-    ray.insideMedium = 0;
-    ray.seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
-    ray.tMin = 0.001f;
-    ray.tMax = 1e20f;
-    
-    // Trace ray using OptiX
     uint32_t hitFlag = 0;
     optixTrace(
         params.traversable,
@@ -78,13 +92,13 @@ extern "C" __global__ void __raygen__trace() {
         ray.direction,
         ray.tMin,
         ray.tMax,
-        0.0f,  // rayTime
+        0.0f,
         OptixVisibilityMask(255),
         OPTIX_RAY_FLAG_NONE,
-        0,  // SBT offset
-        1,  // SBT stride
-        0,  // missSBTIndex
-        hitFlag  // payload
+        0,
+        1,
+        0,
+        hitFlag
     );
     
     if (ray.stage == RayState::Shadow) {
@@ -99,7 +113,6 @@ extern "C" __global__ void __raygen__trace() {
             return;
         }
 
-        // Restore next bounce path state after shadow visibility test.
         ray.origin = ray.nextOrigin;
         ray.direction = ray.nextDirection;
         ray.throughput = ray.nextThroughput;
@@ -110,26 +123,23 @@ extern "C" __global__ void __raygen__trace() {
     } else if (hitFlag) {
         ray.stage = RayState::Shade;
     } else {
-        // Miss: accumulate environment radiance and terminate
         ray.radiance = ray.radiance + ray.throughput * sampleEnvironment(ray.direction);
         ray.stage = RayState::Terminated;
     }
 }
 
-// Closest hit program
 extern "C" __global__ void __closesthit__trace() {
     const uint32_t idx = optixGetLaunchIndex().x;
     if (idx >= params.numActive) return;
     
-    const uint32_t rayIndex = params.activeIndices[idx];
+    const uint32_t rayIndex = params.renderBuffers.activeIndices[idx];
     
-    RayState& ray = params.rayPool[rayIndex];
+    RayState& ray = params.renderBuffers.rayPool[rayIndex];
     if (ray.stage == RayState::Shadow) {
         optixSetPayload_0(1);
         return;
     }
 
-    // Get hit information
     float t = optixGetRayTmax();
     float3 origin = optixGetWorldRayOrigin();
     float3 direction = optixGetWorldRayDirection();
@@ -137,28 +147,26 @@ extern "C" __global__ void __closesthit__trace() {
     
     uint32_t primIdx = optixGetPrimitiveIndex();
     
-    // Get triangle vertices
-    uint32_t i0 = params.indices[primIdx * 3 + 0];
-    uint32_t i1 = params.indices[primIdx * 3 + 1];
-    uint32_t i2 = params.indices[primIdx * 3 + 2];
+    uint32_t i0 = params.geometry.indices[primIdx * 3 + 0];
+    uint32_t i1 = params.geometry.indices[primIdx * 3 + 1];
+    uint32_t i2 = params.geometry.indices[primIdx * 3 + 2];
     
     float3 v0 = make_float3(
-        params.vertices[i0 * 3 + 0],
-        params.vertices[i0 * 3 + 1],
-        params.vertices[i0 * 3 + 2]
+        params.geometry.vertices[i0 * 3 + 0],
+        params.geometry.vertices[i0 * 3 + 1],
+        params.geometry.vertices[i0 * 3 + 2]
     );
     float3 v1 = make_float3(
-        params.vertices[i1 * 3 + 0],
-        params.vertices[i1 * 3 + 1],
-        params.vertices[i1 * 3 + 2]
+        params.geometry.vertices[i1 * 3 + 0],
+        params.geometry.vertices[i1 * 3 + 1],
+        params.geometry.vertices[i1 * 3 + 2]
     );
     float3 v2 = make_float3(
-        params.vertices[i2 * 3 + 0],
-        params.vertices[i2 * 3 + 1],
-        params.vertices[i2 * 3 + 2]
+        params.geometry.vertices[i2 * 3 + 0],
+        params.geometry.vertices[i2 * 3 + 1],
+        params.geometry.vertices[i2 * 3 + 2]
     );
     
-    // Compute geometric normal
     float3 e1 = v1 - v0;
     float3 e2 = v2 - v0;
     float3 geometricNormal = normalize(cross(e1, e2));
@@ -166,39 +174,36 @@ extern "C" __global__ void __closesthit__trace() {
     float3 normal = frontFace ? geometricNormal : -geometricNormal;
     
     float2 uv = make_float2(0.0f, 0.0f);
-    if (params.texcoords != nullptr) {
+    if (params.geometry.texcoords != nullptr) {
         const float2 bary = optixGetTriangleBarycentrics();
         const float b1 = bary.x;
         const float b2 = bary.y;
         const float b0 = 1.0f - b1 - b2;
         const float2 t0 = make_float2(
-            params.texcoords[i0 * 2 + 0],
-            params.texcoords[i0 * 2 + 1]);
+            params.geometry.texcoords[i0 * 2 + 0],
+            params.geometry.texcoords[i0 * 2 + 1]);
         const float2 t1 = make_float2(
-            params.texcoords[i1 * 2 + 0],
-            params.texcoords[i1 * 2 + 1]);
+            params.geometry.texcoords[i1 * 2 + 0],
+            params.geometry.texcoords[i1 * 2 + 1]);
         const float2 t2 = make_float2(
-            params.texcoords[i2 * 2 + 0],
-            params.texcoords[i2 * 2 + 1]);
+            params.geometry.texcoords[i2 * 2 + 0],
+            params.geometry.texcoords[i2 * 2 + 1]);
         uv = make_float2(
             t0.x * b0 + t1.x * b1 + t2.x * b2,
             t0.y * b0 + t1.y * b1 + t2.y * b2);
     }
 
-    // Store hit information
-    HitInfo& hit = params.hitBuffer[rayIndex];
+    HitInfo& hit = params.renderBuffers.hitBuffer[rayIndex];
     hit.position = hitPos;
     hit.normal = normal;
     hit.texCoord = uv;
-    hit.materialId = params.triangleMaterialIds[primIdx];
+    hit.materialId = params.geometry.triangleMaterialIds[primIdx];
     hit.primIndex = primIdx;
     hit.frontFace = frontFace;
     
-    // Set payload to indicate hit
     optixSetPayload_0(1);
 }
 
-// Miss program
 extern "C" __global__ void __miss__trace() {
     optixSetPayload_0(0);
 }
