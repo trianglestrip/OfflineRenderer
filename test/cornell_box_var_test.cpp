@@ -1,5 +1,6 @@
 #include <optixw/optixw.h>
 #include <iostream>
+#include <cstring>
 #include <vector>
 #include <fstream>
 #include <cmath>
@@ -147,8 +148,35 @@ void buildCornellBoxVar(Scene* scene) {
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;
 }
 
-int main() {
+// Minimal Cornell Box (box+light only) for "optixw_test box" cross-check
+void buildCornellBox(Scene* scene) {
+    uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
+    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.75f, 0.25f, 0.25f));
+    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
+    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(10.0f, 10.0f, 10.0f));
+    (void)scene->addGlassMaterial(Vec3(1.0f, 1.0f, 1.0f), 1.5f);
+    const float L = -1.0f, R = 1.0f, B = 0.0f, T = 2.0f, N = -1.0f, F = 1.0f;
+    float v[12];
+    uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
+    v[0]=L; v[1]=B; v[2]=F; v[3]=L; v[4]=B; v[5]=N; v[6]=R; v[7]=B; v[8]=N; v[9]=R; v[10]=B; v[11]=F;
+    scene->addTriangleMesh(std::span(v, 12), std::span(inds, 6), whiteMat);
+    v[0]=L; v[1]=T; v[2]=N; v[3]=L; v[4]=T; v[5]=F; v[6]=R; v[7]=T; v[8]=F; v[9]=R; v[10]=T; v[11]=N;
+    scene->addTriangleMesh(std::span(v, 12), std::span(inds, 6), whiteMat);
+    v[0]=L; v[1]=B; v[2]=N; v[3]=R; v[4]=B; v[5]=N; v[6]=R; v[7]=T; v[8]=N; v[9]=L; v[10]=T; v[11]=N;
+    scene->addTriangleMesh(std::span(v, 12), std::span(inds, 6), whiteMat);
+    v[0]=L; v[1]=B; v[2]=F; v[3]=L; v[4]=B; v[5]=N; v[6]=L; v[7]=T; v[8]=N; v[9]=L; v[10]=T; v[11]=F;
+    scene->addTriangleMesh(std::span(v, 12), std::span(inds, 6), redMat);
+    v[0]=R; v[1]=B; v[2]=N; v[3]=R; v[4]=B; v[5]=F; v[6]=R; v[7]=T; v[8]=F; v[9]=R; v[10]=T; v[11]=N;
+    scene->addTriangleMesh(std::span(v, 12), std::span(inds, 6), blueMat);
+    const float ly = T - 0.01f;
+    float lv[] = { -0.25f, ly, -0.25f, 0.25f, ly, -0.25f, 0.25f, ly, 0.25f, -0.25f, ly, 0.25f };
+    scene->addTriangleMesh(std::span(lv, 12), std::span(inds, 6), lightMat);
+    std::cout << "[Test] Cornell Box (box+light) scene built" << std::endl;
+}
+
+int main(int argc, char* argv[]) {
     try {
+        bool useBox = (argc > 1 && std::strcmp(argv[1], "box") == 0);
         std::cout << "=== libOptixW Cornell Box Variation Test ===" << std::endl;
         
         // Create context
@@ -156,7 +184,12 @@ int main() {
         
         // Create scene
         Scene* scene = context.createScene();
-        buildCornellBoxVar(scene);
+        if (useBox) {
+            buildCornellBox(scene);
+            scene->setEnvironmentRadiance(Vec3(0.1f, 0.1f, 0.1f));
+        } else {
+            buildCornellBoxVar(scene);
+        }
         scene->finalize();
         
         // Create renderer
@@ -170,13 +203,40 @@ int main() {
         camera.fovY = 40.0f * 3.14159f / 180.0f;
         camera.aspect = 1.0f;
         
-        const ::RenderConfig cfg = render_config::load("cornell_box_var");
-        const uint32_t width = cfg.width;
-        const uint32_t height = cfg.height;
+        const char* section = useBox ? "cornell_box" : "cornell_box_var";
+        const ::RenderConfig cfg = render_config::load(section);
+        uint32_t width = cfg.width;
+        uint32_t height = cfg.height;
+        bool useSmallRes = (argc > 1 && std::strcmp(argv[1], "small") == 0);
+        if (useSmallRes && !useBox) {
+            width = 256;
+            height = 256;
+            std::cout << "[Test] Using small resolution 256x256" << std::endl;
+        }
         const uint32_t spp = cfg.spp;
-        
+
         std::cout << "[Test] Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
-        
+
+        if (useBox) {
+            std::vector<Vec3> outputBuffer(width * height);
+            renderer->render(scene, camera, outputBuffer.data(), width, height, spp,
+                             cfg.denoiser, cfg.denoiserBlend, cfg.enableTiling, 0, 0);
+            savePNG(render_config::resolveGalleryPath("cornell_box.png").string().c_str(),
+                    outputBuffer.data(), width, height);
+            std::cout << "[Test] Test completed successfully (box scene)" << std::endl;
+            return 0;
+        }
+
+        if (useSmallRes) {
+            std::vector<Vec3> outputBuffer(width * height);
+            renderer->render(scene, camera, outputBuffer.data(), width, height, spp,
+                             cfg.denoiser, cfg.denoiserBlend, false, 0, 0);
+            savePNG(render_config::resolveGalleryPath("cornell_box_var_small.png").string().c_str(),
+                    outputBuffer.data(), width, height);
+            std::cout << "[Test] Test completed successfully (256x256)" << std::endl;
+            return 0;
+        }
+
         auto runRender = [&](uint32_t tileW, uint32_t tileH, const char *label) {
             // capture console output so we can inspect the denoiser log
             std::ostringstream oss;

@@ -989,6 +989,46 @@ __device__ inline uint32_t tea(uint32_t val0, uint32_t val1) {
     return v0;
 }
 
+// Sample one area light for NEE; return contribution and set shadow ray on ray.
+__device__ void sampleAreaLightNEE(
+    const optixw::ShadeKernelParams* params,
+    const optixw::HitInfo& hit,
+    const optixw::MaterialData& mat,
+    const float3& wo,
+    optixw::RayState& ray,
+    uint32_t lightIdx
+) {
+    if (lightIdx >= params->lighting.numAreaLights || params->lighting.areaLights == nullptr) {
+        return;
+    }
+    const optixw::AreaLightData& light = params->lighting.areaLights[lightIdx];
+    float u = randf(ray.seed);
+    float v = randf(ray.seed);
+    float3 lightPoint = light.position +
+        (u - 0.5f) * light.width * light.tangent +
+        (v - 0.5f) * light.height * light.bitangent;
+    float3 toLight = lightPoint - hit.position;
+    float distSq = dot(toLight, toLight);
+    float dist = sqrtf(fmaxf(distSq, 1e-12f));
+    toLight = toLight / dist;
+    const float3 n = hit.normal;
+    float cosShading = fmaxf(0.0f, dot(n, toLight));
+    float cosLight = fmaxf(0.0f, dot(light.normal, -toLight));
+    if (cosShading <= 0.0f || cosLight <= 0.0f) {
+        return;
+    }
+    float area = light.width * light.height;
+    if (area < 1e-10f) return;
+    float3 brdf = mat.baseColor * M_1_PI * cosShading;
+    float3 contribution = light.emission * brdf * (cosLight * area / fmaxf(distSq, 1e-10f));
+    ray.pendingDirect = ray.throughput * contribution;
+    const float eps = 1e-4f;
+    ray.origin = hit.position + eps * n;
+    ray.direction = toLight;
+    ray.tMin = eps;
+    ray.tMax = fmaxf(dist - eps, eps);
+}
+
 extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= params->renderBuffers.numActive) {
@@ -1000,10 +1040,8 @@ extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
 
     if (ray.stage == optixw::RayState::Terminated) {
         if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
-            if (ray.pixelIndex < 262144) {
-                params->renderBuffers.accumBuffer[ray.pixelIndex] =
-                    params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
-            }
+            params->renderBuffers.accumBuffer[ray.pixelIndex] =
+                params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
         }
         return;
     }
@@ -1011,6 +1049,84 @@ extern "C" __global__ void shade(const optixw::ShadeKernelParams* params) {
         return;
     }
 
-    ray.radiance = make_float3(0.5f, 0.5f, 0.5f);
-    ray.stage = optixw::RayState::Terminated;
+    const optixw::HitInfo& hit = params->renderBuffers.hitBuffer[rayIndex];
+    if (hit.materialId >= params->materialsTextures.numMaterials) {
+        ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+        ray.stage = optixw::RayState::Terminated;
+        return;
+    }
+
+    const optixw::MaterialData& inMat = params->materialsTextures.materials[hit.materialId];
+    optixw::MaterialData mat = inMat;
+    if (inMat.baseColorTextureId != 0xFFFFFFFFu && inMat.baseColorTextureId < params->materialsTextures.numTextures && params->materialsTextures.textures != nullptr) {
+        mat = resolveMaterial(inMat, hit, params->materialsTextures.textures, params->materialsTextures.numTextures);
+    }
+    const float3 wo = -ray.direction;
+    const float3 n = hit.normal;
+
+    ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
+    ray.pendingDirect = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextOrigin = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextDirection = make_float3(0.0f, 0.0f, 0.0f);
+    ray.nextThroughput = make_float3(0.0f, 0.0f, 0.0f);
+
+    if (mat.type == kDiffuseEmitter || mat.type == kSpecularEmitter) {
+        float scale = (mat.emitterScale > 0.0f) ? mat.emitterScale : 1.0f;
+        float3 Le = mat.emission * scale;
+        if (mat.type == kSpecularEmitter) {
+            float cosN = fmaxf(0.0f, dot(n, wo));
+            Le = Le * cosN;
+        }
+        ray.radiance = ray.throughput * Le;
+    }
+
+    bool haveShadowRay = false;
+    if (params->lighting.numAreaLights > 0 && params->lighting.areaLights != nullptr) {
+        uint32_t lightIdx = (params->lighting.numAreaLights > 1)
+            ? (static_cast<uint32_t>(randf(ray.seed) * params->lighting.numAreaLights) % params->lighting.numAreaLights)
+            : 0u;
+        if (lightIdx < params->lighting.numAreaLights) {
+            sampleAreaLightNEE(params, hit, mat, wo, ray, lightIdx);
+            haveShadowRay = (ray.pendingDirect.x > 0.0f || ray.pendingDirect.y > 0.0f || ray.pendingDirect.z > 0.0f);
+        }
+    }
+    if (!haveShadowRay && params->lighting.numPointLights > 0 && params->lighting.pointLights != nullptr) {
+        uint32_t lightIdx = (params->lighting.numPointLights > 1)
+            ? (static_cast<uint32_t>(randf(ray.seed) * params->lighting.numPointLights) % params->lighting.numPointLights)
+            : 0u;
+        if (lightIdx < params->lighting.numPointLights) {
+            const optixw::PointLightData& light = params->lighting.pointLights[lightIdx];
+            float3 toLight = light.position - hit.position;
+            float distSq = dot(toLight, toLight);
+            float dist = sqrtf(fmaxf(distSq, 1e-12f));
+            toLight = toLight / dist;
+            float cosShading = fmaxf(0.0f, dot(n, toLight));
+            if (cosShading > 0.0f) {
+                float3 brdf = mat.baseColor * M_1_PI * cosShading;
+                float3 contribution = light.intensity * brdf / fmaxf(distSq, 1e-10f);
+                ray.pendingDirect = ray.throughput * contribution;
+                const float eps = 1e-4f;
+                ray.origin = hit.position + eps * n;
+                ray.direction = toLight;
+                ray.tMin = eps;
+                ray.tMax = fmaxf(dist - eps, eps);
+                haveShadowRay = true;
+            }
+        }
+    }
+
+    params->renderBuffers.albedoBuffer[ray.pixelIndex] = mat.baseColor;
+    params->renderBuffers.normalBuffer[ray.pixelIndex] = n;
+
+    if (haveShadowRay) {
+        ray.terminateAfterShadow = 1;
+        ray.stage = optixw::RayState::Shadow;
+    } else {
+        ray.stage = optixw::RayState::Terminated;
+        // Accumulate immediately: this ray won't be in the active list next iteration (compact removes Terminated)
+        if (ray.radiance.x > 0.0f || ray.radiance.y > 0.0f || ray.radiance.z > 0.0f) {
+            params->renderBuffers.accumBuffer[ray.pixelIndex] =
+                params->renderBuffers.accumBuffer[ray.pixelIndex] + ray.radiance;
+        }
+    }
 }

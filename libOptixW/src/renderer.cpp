@@ -306,7 +306,7 @@ void Renderer::render(
     m_impl->lightBuffers.numAreaLights = SceneAccessor::getNumAreaLights(scene);
     
     std::cout << "[Renderer] GAS handle: " << gasHandle << std::endl;
-    
+
     // Fall back to serial rendering to avoid concurrent access issues
     for (uint32_t sample = 0; sample < spp; ++sample) {
         std::cout << "\r[Renderer] Sample " << (sample + 1) << "/" << spp << std::flush;
@@ -493,10 +493,10 @@ void Renderer::render(
         guide.normal.pixelStrideInBytes = sizeof(float4);
         guide.normal.format = OPTIX_PIXEL_FORMAT_FLOAT4;
         
-        // 优化降噪器参数，提高质量
+        // 使用传入的 denoiserBlend，与 render_config.ini 一致（libVLR 参考流程）
         OptixDenoiserParams params = {};
         params.hdrAverageColor = 0;
-        params.blendFactor = 0.8f; // 提高blend因子，使降噪效果更明显
+        params.blendFactor = denoiserBlend;
         params.hdrIntensity = m_impl->denoiser.buffers.d_intensity;
         params.temporalModeUsePreviousLayers = 0;
         

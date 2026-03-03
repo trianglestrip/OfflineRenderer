@@ -37,10 +37,12 @@ __device__ inline float3 sampleEnvironment(const float3& dir) {
 extern "C" __global__ void __raygen__trace() {
     const uint32_t idx = optixGetLaunchIndex().x;
     if (idx >= params.numActive) return;
-    
+
     const uint32_t rayIndex = params.renderBuffers.activeIndices[idx];
     RayState& ray = params.renderBuffers.rayPool[rayIndex];
-    
+
+    if (ray.stage == RayState::Terminated) return;
+
     if (ray.stage == RayState::Trace) {
         if (ray.depth == 0) {
             uint32_t px = rayIndex % params.width;
@@ -116,6 +118,7 @@ extern "C" __global__ void __raygen__trace() {
         ray.origin = ray.nextOrigin;
         ray.direction = ray.nextDirection;
         ray.throughput = ray.nextThroughput;
+        ray.depth = ray.depth + 1;
         ray.terminateAfterShadow = 0;
         ray.tMin = 0.001f;
         ray.tMax = 1e20f;

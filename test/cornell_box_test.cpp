@@ -1,5 +1,6 @@
 #include <optixw/optixw.h>
 #include <iostream>
+#include <sstream>
 #include <vector>
 #include <fstream>
 #include <cmath>
@@ -113,8 +114,7 @@ void buildCornellBox(Scene* scene) {
     uint32_t redMat = scene->addLambertianMaterial(Vec3(0.75f, 0.25f, 0.25f));
     uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
     uint32_t lightMat = scene->addEmissiveMaterial(Vec3(10.0f, 10.0f, 10.0f));
-    uint32_t metalMat = scene->addMetalMaterial(Vec3(0.9f, 0.9f, 0.9f), 0.1f);  // Shiny metal
-    uint32_t glassMat = scene->addGlassMaterial(Vec3(1.0f, 1.0f, 1.0f), 1.5f);  // Glass (IOR=1.5)
+    (void)scene->addGlassMaterial(Vec3(1.0f, 1.0f, 1.0f), 1.5f);  // 5 materials total, match cornell_box_var
     
     // Room dimensions
     const float L = -1.0f, R = 1.0f;  // Left, Right
@@ -165,82 +165,29 @@ void buildCornellBox(Scene* scene) {
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
     }
-    
-    // Metal cube (left, shiny)
-    {
-        const float s = 0.25f, h = 0.5f;
-        const float cx = -0.5f, cz = 0.3f;
-        float verts[] = {
-            // Top
-            cx-s, h, cz-s,  cx+s, h, cz-s,  cx+s, h, cz+s,  cx-s, h, cz+s,
-            // Bottom
-            cx-s, B, cz-s,  cx+s, B, cz-s,  cx+s, B, cz+s,  cx-s, B, cz+s,
-        };
-        uint32_t inds[] = {
-            0, 1, 2, 0, 2, 3,  // Top
-            4, 5, 1, 4, 1, 0,  // Front
-            5, 6, 2, 5, 2, 1,  // Right
-            6, 7, 3, 6, 3, 2,  // Back
-            7, 4, 0, 7, 0, 3   // Left
-        };
-        scene->addTriangleMesh(std::span(verts, 24), std::span(inds, 30), metalMat);
-    }
-    
-    // Lambertian cube (right, white)
-    {
-        const float s = 0.25f, h = 0.5f;
-        const float cx = 0.5f, cz = 0.3f;
-        float verts[] = {
-            // Top
-            cx-s, h, cz-s,  cx+s, h, cz-s,  cx+s, h, cz+s,  cx-s, h, cz+s,
-            // Bottom
-            cx-s, B, cz-s,  cx+s, B, cz-s,  cx+s, B, cz+s,  cx-s, B, cz+s,
-        };
-        uint32_t inds[] = {
-            0, 1, 2, 0, 2, 3,  // Top
-            4, 5, 1, 4, 1, 0,  // Front
-            5, 6, 2, 5, 2, 1,  // Right
-            6, 7, 3, 6, 3, 2,  // Back
-            7, 4, 0, 7, 0, 3   // Left
-        };
-        scene->addTriangleMesh(std::span(verts, 24), std::span(inds, 30), whiteMat);
-    }
-    
-    // Glass sphere (center, transparent)
-    {
-        std::vector<float> verts;
-        std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.0f, 0.4f, -0.2f, 0.3f, 20, 15);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
-    }
-    
-    std::cout << "[Test] Cornell Box scene built" << std::endl;
+
+    std::cout << "[Test] Cornell Box scene built (box + light only)" << std::endl;
 }
 
 int main() {
     try {
         std::cout << "=== libOptixW Cornell Box Test with Taskflow Integration ===" << std::endl;
-        
-        // Create context (this now creates and manages TaskScheduler internally)
+
         Context context;
-        
-        // Create scene (now uses the TaskScheduler from context)
         Scene* scene = context.createScene();
         buildCornellBox(scene);
         scene->setEnvironmentRadiance(Vec3(0.1f, 0.1f, 0.1f));
         scene->finalize();
-        
-        // Create renderer (now uses the TaskScheduler from context)
+
         Renderer* renderer = context.createRenderer();
-        
-        // Setup camera
+
         Camera camera;
         camera.position = Vec3(0.0f, 1.0f, 2.5f);
         camera.target = Vec3(0.0f, 1.0f, 0.0f);
         camera.up = Vec3(0.0f, 1.0f, 0.0f);
         camera.fovY = 40.0f * 3.14159f / 180.0f;
         camera.aspect = 1.0f;
-        
+
         const ::RenderConfig cfg = render_config::load("cornell_box");
         const uint32_t width = cfg.width;
         const uint32_t height = cfg.height;
@@ -250,7 +197,7 @@ int main() {
         
         std::cout << "[Test] Rendering " << width << "x" << height 
                   << " @ " << spp << " spp..." << std::endl;
-        
+
         renderer->render(scene, camera, image.data(), width, height, spp, cfg.denoiser, cfg.denoiserBlend, cfg.enableTiling, cfg.tileWidth, cfg.tileHeight);
         
         const std::filesystem::path outputPath = render_config::resolveGalleryPath("cornell_box.png");

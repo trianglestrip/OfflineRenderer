@@ -21,21 +21,25 @@ void Impl::renderSample(
     uint32_t height,
     uint32_t sampleIndex)
 {
-    std::cout << "[Debug] renderSample start" << std::endl;
-    
     if (materialTextureBuffers.numMaterials == 0 || materialTextureBuffers.d_materials == 0) {
-        std::cout << "[Warning] No materials available for shading" << std::endl;
         return;
     }
-    
-    std::cout << "[Debug] materials available: " << materialTextureBuffers.numMaterials << std::endl;
+
+    const uint32_t expectedPixels = width * height;
+    if (numPixels == 0 || numPixels != expectedPixels) {
+        throw std::runtime_error("renderSample: numPixels is 0 or does not match width*height (allocateBuffers may not have been called)");
+    }
+    if (wavefrontBuffers.d_activeIndices == 0 || wavefrontBuffers.d_rayPool == 0 || wavefrontBuffers.d_compactIndices == 0 ||
+        wavefrontBuffers.d_hitBuffer == 0 || launchParamsBuffer.d_launchParams == 0) {
+        throw std::runtime_error("renderSample: wavefront or launch buffer is null (allocateBuffers failed or not called)");
+    }
 
     // Initialize active rays (all pixels)
     std::vector<uint32_t> activeIndices(numPixels);
     for (uint32_t i = 0; i < numPixels; ++i) {
         activeIndices[i] = i;
     }
-    
+
     CUDA_CHECK(cudaMemcpy(
         (void*)wavefrontBuffers.d_activeIndices,
         activeIndices.data(),
@@ -54,7 +58,6 @@ void Impl::renderSample(
     const uint32_t blockSize = 256;
     for (uint32_t depth = 0; depth < maxIterations && numActive > 0; ++depth) {
         // Initialize all ray states to Trace with depth=0 for primary ray generation
-        // Only initialize on the FIRST iteration of each sample
         if (depth == 0) {
             std::vector<RayState> hostRays(numPixels);
             for (uint32_t i = 0; i < numPixels; ++i) {
@@ -130,7 +133,6 @@ void Impl::renderSample(
             1,
             1
         ));
-        
         // Synchronize to ensure OptiX launch completes before shade kernel
         CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -189,7 +191,6 @@ void Impl::renderSample(
             shadeArgs,
             nullptr
         ));
-
         // Free device memory
         CUDA_CHECK(cudaFree(d_shadeParams));
 

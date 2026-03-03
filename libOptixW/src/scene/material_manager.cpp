@@ -7,21 +7,20 @@
 
 namespace optixw {
 
-// 材质类型常量（与 wavefront_kernel_params.h 中的 MaterialTag 一致）
+// 材质类型常量（必须与 kernels/shade.cu 中的 #define 完全一致）
 namespace {
     constexpr uint32_t kMatte = 0;
     constexpr uint32_t kLambertianScattering = 1;
-    constexpr uint32_t kSpecularReflection = 2;
-    constexpr uint32_t kSpecularScattering = 3;
-    constexpr uint32_t kMicrofacetReflection = 4;
-    constexpr uint32_t kMicrofacetScattering = 5;
-    constexpr uint32_t kUE4 = 6;
-    constexpr uint32_t kOldStyle = 7;
+    constexpr uint32_t kUE4 = 2;
+    constexpr uint32_t kOldStyle = 3;
+    constexpr uint32_t kSpecularReflection = 4;
+    constexpr uint32_t kSpecularScattering = 5;
+    constexpr uint32_t kMicrofacetReflection = 6;
+    constexpr uint32_t kMicrofacetScattering = 7;
     constexpr uint32_t kDiffuseEmitter = 8;
-    constexpr uint32_t kDirectionalEmitter = 9;
-    constexpr uint32_t kPointEmitter = 10;
+    constexpr uint32_t kSpecularEmitter = 9;
+    constexpr uint32_t kEnvironmentEmitter = 10;
     constexpr uint32_t kMulti = 11;
-    constexpr uint32_t kEnvironmentEmitter = 12;
 
     inline float3 toFloat3(const Vec3& v) {
         return make_float3(v.x, v.y, v.z);
@@ -82,6 +81,9 @@ uint32_t MaterialManager::addMicrofacetReflectionMaterial(const Vec3& albedo, fl
     mat.metallic = 1.0f;
     mat.iorInt = 1.5f;
     mat.baseColorTextureId = 0xFFFFFFFF;
+    // Conductor Fresnel: eta/k 不能为 0，否则 GPU 上会产生 NaN。使用典型金属默认值（铝近似）
+    mat.eta = make_float3(1.5f, 1.5f, 1.5f);
+    mat.k = make_float3(7.0f, 7.0f, 7.0f);
     return addMaterial(mat);
 }
 
