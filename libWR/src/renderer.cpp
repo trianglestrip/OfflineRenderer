@@ -1,6 +1,7 @@
 #include "wr/wr.h"
 #include "wr/types.h"
 #include "utils/utils.h"
+#include "utils/file_utils.h"
 #include "denoiser.h"
 #include <optix.h>
 #include <cuda_runtime.h>
@@ -42,16 +43,16 @@ struct RendererImpl {
     uint32_t maxRays = 0;
     
     void loadKernels() {
-        std::filesystem::path exePath = std::filesystem::current_path();
+        std::filesystem::path exeDir = utils::getExecutableDirectory();
         
-        std::filesystem::path shadePath = exePath / "shade.cubin";
+        std::filesystem::path shadePath = exeDir / "shade.cubin";
         if (!std::filesystem::exists(shadePath)) {
             throw std::runtime_error("shade.cubin not found at: " + shadePath.string());
         }
         CU_CHECK(cuModuleLoad(&shadeModule, shadePath.string().c_str()));
         CU_CHECK(cuModuleGetFunction(&shadeKernel, shadeModule, "shade"));
         
-        std::filesystem::path compactPath = exePath / "compact.cubin";
+        std::filesystem::path compactPath = exeDir / "compact.cubin";
         if (!std::filesystem::exists(compactPath)) {
             throw std::runtime_error("compact.cubin not found at: " + compactPath.string());
         }

@@ -20,25 +20,20 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
     )
 
     set_target_properties(${TEST_NAME} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/${CMAKE_BUILD_TYPE}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
     if(MSVC)
         target_link_options(${TEST_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
     endif()
 
-    # Kernel files are now built directly to ${CMAKE_BINARY_DIR}, copy to test runtime dir
+    # 将 render_config.ini 复制到测试运行时目录
+    # 内核文件 (ptx/cubin) 直接构建到 bin/Release
     add_custom_command(TARGET ${TEST_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying kernel files to ${TEST_NAME} runtime directory"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_BINARY_DIR}/trace.ptx
-            ${CMAKE_BINARY_DIR}/shade.cubin
-            ${CMAKE_BINARY_DIR}/compact.cubin
-            $<TARGET_FILE_DIR:${TEST_NAME}>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/render_config.ini"
             "$<TARGET_FILE_DIR:${TEST_NAME}>/render_config.ini"
-        COMMENT "Copying kernel files to ${TEST_NAME} runtime directory"
+        COMMENT "Copying render_config.ini to ${TEST_NAME} runtime directory"
     )
 endfunction()
 

@@ -1,5 +1,6 @@
 #include "wr/wr.h"
 #include "utils/cuda_utils.h"
+#include "utils/file_utils.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -14,8 +15,8 @@ namespace wr {
 extern OptixDeviceContext getOptixContext();
 
 static std::vector<char> loadPTX(const char* filename) {
-    std::filesystem::path exePath = std::filesystem::current_path();
-    std::filesystem::path ptxPath = exePath / filename;
+    std::filesystem::path exeDir = utils::getExecutableDirectory();
+    std::filesystem::path ptxPath = exeDir / filename;
     
     std::ifstream file(ptxPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {

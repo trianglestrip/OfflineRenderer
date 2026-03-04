@@ -25,8 +25,8 @@ set(WR_CUDA_KERNELS
     "kernels/compact.cu"
 )
 
-# Set kernel output directory to build root for easy access
-set(WR_KERNEL_OUTPUT_DIR "${CMAKE_BINARY_DIR}")
+# Set kernel output directory to bin/Release (same as test executable)
+set(WR_KERNEL_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/Release")
 
 # Compile OptiX kernels to PTX
 foreach(KERNEL_FILE ${WR_OPTIX_KERNELS})
@@ -35,6 +35,7 @@ foreach(KERNEL_FILE ${WR_OPTIX_KERNELS})
     
     add_custom_command(
         OUTPUT ${PTX_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${WR_KERNEL_OUTPUT_DIR}
         COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}
             -ptx
             -o ${PTX_FILE}
@@ -58,6 +59,7 @@ foreach(KERNEL_FILE ${WR_CUDA_KERNELS})
     
     add_custom_command(
         OUTPUT ${CUBIN_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${WR_KERNEL_OUTPUT_DIR}
         COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}
             -cubin
             -o ${CUBIN_FILE}
@@ -99,6 +101,11 @@ add_library(${TARGET_NAME} STATIC
     ${WR_HEADERS}
 )
 
+# Set output directory for static library to bin/Release
+set_target_properties(${TARGET_NAME} PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release"
+)
+
 add_dependencies(${TARGET_NAME} wr_kernels)
 
 # include directories
@@ -124,15 +131,6 @@ target_link_libraries(${TARGET_NAME}
 
 # C++20 requirement
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_20)
-
-# Copy PTX/CUBIN files to runtime directory
-add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "Copying kernel files to runtime directory"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${WR_KERNEL_FILES}
-        $<TARGET_FILE_DIR:${TARGET_NAME}>
-    COMMENT "Copying kernel files"
-)
 
 # Add test subdirectory
 add_subdirectory(test)
