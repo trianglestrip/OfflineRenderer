@@ -146,6 +146,15 @@ foreach(KERNEL ${OPTIXW_KERNELS})
     get_filename_component(KERNEL_NAME ${KERNEL} NAME_WE)
     set(PTX_FILE "${CMAKE_BINARY_DIR}/ptx/${KERNEL_NAME}.ptx")
     
+    # Build include flags for nvcc
+    set(NVCC_INCLUDES
+        -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -I${OptiX_INSTALL_DIR}/include
+    )
+    foreach(inc_dir IN LISTS CUDAToolkit_INCLUDE_DIRS)
+        list(APPEND NVCC_INCLUDES -I${inc_dir})
+    endforeach()
+    
     add_custom_command(
         OUTPUT ${PTX_FILE}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/ptx"
@@ -153,8 +162,7 @@ foreach(KERNEL ${OPTIXW_KERNELS})
             -ptx
             -o ${PTX_FILE}
             ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL}
-            -I${CMAKE_CURRENT_SOURCE_DIR}/include
-            -I${OptiX_INSTALL_DIR}/include
+            ${NVCC_INCLUDES}
             --gpu-architecture=compute_75
             --use_fast_math
             -std=c++20

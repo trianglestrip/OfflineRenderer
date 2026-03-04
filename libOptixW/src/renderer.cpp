@@ -253,9 +253,9 @@ void Renderer::render(
     if (!scene) {
         throw std::runtime_error("Scene is null");
     }
-    
-    std::cout << "[Renderer] Starting render: " 
-              << width << "x" << height 
+
+    std::cout << "[Renderer] Starting render: "
+              << width << "x" << height
               << " @ " << spp << " spp" << std::endl;
     
     // Create pipeline if needed

@@ -45,19 +45,19 @@ extern "C" __global__ void __raygen__trace() {
 
     if (ray.stage == RayState::Trace) {
         if (ray.depth == 0) {
-            uint32_t px = rayIndex % params.width;
-            uint32_t py = rayIndex / params.width;
+            const uint32_t px = rayIndex % params.width;
+            const uint32_t py = rayIndex / params.width;
             
-            // 使用分层采样，提高采样效率
-            uint32_t seed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
+            // Initialize seed for primary ray sampling
+            const uint32_t initSeed = (rayIndex * 1664525u + params.sampleIndex * 1013904223u) ^ 0x9e3779b9u;
             
-            // 生成均匀分布的采样点
-            float r1 = (float)(seed >> 8) / 16777216.0f;
-            seed = seed * 1664525u + 1013904223u;
-            float r2 = (float)(seed >> 8) / 16777216.0f;
+            // Generate stratified sample offsets
+            const float r1 = (float)(initSeed >> 8) / 16777216.0f;
+            const uint32_t nextSeed = initSeed * 1664525u + 1013904223u;
+            const float r2 = (float)(nextSeed >> 8) / 16777216.0f;
             
-            float ndcX = (2.0f * (px + r1) / params.width - 1.0f) * params.camera.aspect;
-            float ndcY = 1.0f - 2.0f * (py + r2) / params.height;
+            const float ndcX = (2.0f * (px + r1) / params.width - 1.0f) * params.camera.aspect;
+            const float ndcY = 1.0f - 2.0f * (py + r2) / params.height;
             
             float3 rayDir = params.camera.forward + 
                            params.camera.right * ndcX * params.camera.tanHalfFovY +
@@ -77,7 +77,7 @@ extern "C" __global__ void __raygen__trace() {
             ray.stage = RayState::Trace;
             ray.terminateAfterShadow = 0;
             ray.insideMedium = 0;
-            ray.seed = seed;
+            ray.seed = nextSeed;  // Store updated seed for future bounces
             ray.initImportance = 1.0f;
             ray.prevBsdfPdf = 0.0f;
             ray.prevLightPdf = 0.0f;

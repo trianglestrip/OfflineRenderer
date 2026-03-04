@@ -45,5 +45,17 @@ endfunction()
 add_optixw_test(optixw_test cornell_box_test.cpp)
 add_optixw_test(cornell_box_var_test cornell_box_var_test.cpp)
 
+# Size check utility
+add_executable(check_sizes check_sizes.cpp)
+target_include_directories(check_sizes PRIVATE
+    ${CMAKE_SOURCE_DIR}/libOptixW/include
+    ${OptiX_INSTALL_DIR}/include
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+target_link_libraries(check_sizes PRIVATE libOptixW)
+set_target_properties(check_sizes PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/${CMAKE_BUILD_TYPE}"
+)
+
 add_test(NAME optixw_cornell_box COMMAND optixw_test)
 add_test(NAME optixw_cornell_box_var COMMAND cornell_box_var_test)
