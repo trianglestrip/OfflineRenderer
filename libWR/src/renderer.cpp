@@ -1,5 +1,6 @@
 #include "wr/wr.h"
 #include "wr/types.h"
+#include "utils/utils.h"
 #include <optix.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
@@ -8,24 +9,6 @@
 #include <stdexcept>
 #include <cmath>
 #include <filesystem>
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t error = call; \
-        if (error != cudaSuccess) { \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(error)); \
-        } \
-    } while(0)
-
-#define CU_CHECK(call) \
-    do { \
-        CUresult result = call; \
-        if (result != CUDA_SUCCESS) { \
-            const char* errStr; \
-            cuGetErrorString(result, &errStr); \
-            throw std::runtime_error(std::string("CU error: ") + errStr); \
-        } \
-    } while(0)
 
 namespace wr {
 
@@ -146,28 +129,8 @@ void Renderer::render(Scene* scene,
     
     m_impl->allocateBuffers(width, height);
     
-    float3 forward = make_float3(
-        camera.target.x - camera.position.x,
-        camera.target.y - camera.position.y,
-        camera.target.z - camera.position.z
-    );
-    float lenF = sqrtf(forward.x*forward.x + forward.y*forward.y + forward.z*forward.z);
-    forward.x /= lenF; forward.y /= lenF; forward.z /= lenF;
-    
-    float3 upVec = make_float3(camera.up.x, camera.up.y, camera.up.z);
-    float3 right = make_float3(
-        forward.y * upVec.z - forward.z * upVec.y,
-        forward.z * upVec.x - forward.x * upVec.z,
-        forward.x * upVec.y - forward.y * upVec.x
-    );
-    float lenR = sqrtf(right.x*right.x + right.y*right.y + right.z*right.z);
-    right.x /= lenR; right.y /= lenR; right.z /= lenR;
-    
-    float3 up = make_float3(
-        right.y * forward.z - right.z * forward.y,
-        right.z * forward.x - right.x * forward.z,
-        right.x * forward.y - right.y * forward.x
-    );
+    float3 forward, right, up;
+    utils::calculateCameraBasis(camera, forward, right, up);
     
     CameraData camData;
     camData.position = make_float3(camera.position.x, camera.position.y, camera.position.z);

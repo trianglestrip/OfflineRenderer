@@ -79,6 +79,9 @@ set(WR_SOURCES
     "src/scene.cpp"
     "src/renderer.cpp"
     "src/pipeline.cpp"
+    "utils/image_utils.cpp"
+    "utils/math_utils.cpp"
+    "utils/file_utils.cpp"
 )
 
 # Public headers
@@ -101,6 +104,7 @@ target_include_directories(${TARGET_NAME}
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${OptiX_INSTALL_DIR}/include
         ${CUDAToolkit_INCLUDE_DIRS}
 )

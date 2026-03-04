@@ -1,4 +1,5 @@
 #include <wr/wr.h>
+#include "utils/utils.h"
 #include <iostream>
 #include <cstring>
 #include <vector>
@@ -7,58 +8,10 @@
 #include <algorithm>
 #include <filesystem>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
 #include "render_config.h"
 
 using namespace wr;
-
-// helper functions (savePNG, createSphere) copied/adapted from original test
-void savePNG(const char* filename, const Vec3* image, uint32_t width, uint32_t height) {
-    std::vector<uint8_t> pixels(width * height * 3);
-    
-    for (uint32_t i = 0; i < width * height; ++i) {
-        float gamma = 1.0f / 2.2f;
-        pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(std::clamp(image[i].x, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(std::clamp(image[i].y, 0.0f, 1.0f), gamma) * 255);
-        pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(std::clamp(image[i].z, 0.0f, 1.0f), gamma) * 255);
-    }
-    
-    stbi_write_png(filename, width, height, 3, pixels.data(), width * 3);
-    std::cout << "Saved " << filename << std::endl;
-}
-
-void createSphere(std::vector<float>& vertices, std::vector<uint32_t>& indices, 
-                  float cx, float cy, float cz, float radius, int segments = 32, int rings = 24) {
-    vertices.clear();
-    indices.clear();
-    
-    for (int ring = 0; ring <= rings; ++ring) {
-        float phi = 3.14159f * ring / rings;
-        for (int seg = 0; seg <= segments; ++seg) {
-            float theta = 2.0f * 3.14159f * seg / segments;
-            float x = cx + radius * sinf(phi) * cosf(theta);
-            float y = cy + radius * cosf(phi);
-            float z = cz + radius * sinf(phi) * sinf(theta);
-            vertices.push_back(x);
-            vertices.push_back(y);
-            vertices.push_back(z);
-        }
-    }
-    
-    for (int ring = 0; ring < rings; ++ring) {
-        for (int seg = 0; seg < segments; ++seg) {
-            int current = ring * (segments + 1) + seg;
-            int next = current + segments + 1;
-            indices.push_back(current);
-            indices.push_back(next);
-            indices.push_back(current + 1);
-            indices.push_back(current + 1);
-            indices.push_back(next);
-            indices.push_back(next + 1);
-        }
-    }
-}
+using namespace wr::utils;
 
 void buildCornellBoxVar(Scene* scene) {
     uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
@@ -107,13 +60,13 @@ void buildCornellBoxVar(Scene* scene) {
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -0.7f, 0.5f, -0.7f, 0.5f, 32, 24);
+        utils::createSphere(verts, inds, -0.7f, 0.5f, -0.7f, 0.5f, 32, 24);
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.5f, 32, 24);
+        utils::createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.5f, 32, 24);
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;
@@ -140,8 +93,8 @@ int main() {
     std::vector<wr::Vec3> image(config.width * config.height);
     renderer->render(scene, camera, image.data(), config.width, config.height, config.spp);
     
-    std::filesystem::path outputPath = render_config::resolveGalleryPath("wr_cornell.png");
-    savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);
+    std::filesystem::path outputPath = utils::resolveGalleryPath("wr_cornell.png");
+    utils::savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);
     
     return 0;
 }
