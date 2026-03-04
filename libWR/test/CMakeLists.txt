@@ -6,9 +6,10 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
     target_include_directories(${TEST_NAME}
     PRIVATE
         ${CMAKE_SOURCE_DIR}/libWR/include
+        ${CMAKE_SOURCE_DIR}/libWR
         ${OptiX_INSTALL_DIR}/include
         ${CUDAToolkit_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/ext/stb
+        ${CMAKE_SOURCE_DIR}/libWR/stb
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 

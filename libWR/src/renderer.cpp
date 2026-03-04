@@ -129,14 +129,14 @@ void Renderer::render(Scene* scene,
     
     m_impl->allocateBuffers(width, height);
     
-    float3 forward, right, up;
+    Vec3 forward, right, up;
     utils::calculateCameraBasis(camera, forward, right, up);
     
     CameraData camData;
     camData.position = make_float3(camera.position.x, camera.position.y, camera.position.z);
-    camData.forward = forward;
-    camData.right = right;
-    camData.up = up;
+    camData.forward = make_float3(forward.x, forward.y, forward.z);
+    camData.right = make_float3(right.x, right.y, right.z);
+    camData.up = make_float3(up.x, up.y, up.z);
     camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
     camData.aspect = camera.aspect;
     

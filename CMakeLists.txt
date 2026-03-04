@@ -83,14 +83,6 @@ option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
 
 
 
-# libOptixW: Wavefront Path Tracer wrapper for libVLR
-add_subdirectory(libOptixW)
-set_project_group("libOptixW" "libOptixW")
-
-# libWR: new Wavefront library (no Taskflow for now)
+# libWR: new Wavefront library
 add_subdirectory(libWR)
 set_project_group("libWR" "libWR")
-
-# Top-level tests that consume libOptixW as an external library.
-add_subdirectory(test)
-set_project_group("Tests" "test")
