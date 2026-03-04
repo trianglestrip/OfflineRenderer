@@ -1,24 +1,9 @@
 #include "denoiser.h"
+#include "utils/cuda_utils.h"
 #include <optix_stubs.h>
 #include <optix_host.h>
 #include <iostream>
 #include <stdexcept>
-
-#define OPTIX_CHECK(call) \
-    do { \
-        OptixResult result = call; \
-        if (result != OPTIX_SUCCESS) { \
-            throw std::runtime_error(std::string("OptiX error: ") + optixGetErrorName(result)); \
-        } \
-    } while(0)
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t error = call; \
-        if (error != cudaSuccess) { \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(error)); \
-        } \
-    } while(0)
 
 namespace wr {
 
@@ -62,16 +47,16 @@ void Denoiser::initialize(uint32_t width, uint32_t height, const DenoiserConfig&
     size_t scratchSize = m_denoiserSizes.withoutOverlapScratchSizeInBytes;
     size_t bufferSize = m_width * m_height * sizeof(float3);
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiserState), stateSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiserScratch), scratchSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiseInput), bufferSize));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiseOutput), bufferSize));
+    CUDA_MALLOC(&m_d_denoiserState, stateSize);
+    CUDA_MALLOC(&m_d_denoiserScratch, scratchSize);
+    CUDA_MALLOC(&m_d_denoiseInput, bufferSize);
+    CUDA_MALLOC(&m_d_denoiseOutput, bufferSize);
     
     if (m_config.useAlbedo) {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiseAlbedo), bufferSize));
+        CUDA_MALLOC(&m_d_denoiseAlbedo, bufferSize);
     }
     if (m_config.useNormal) {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_d_denoiseNormal), bufferSize));
+        CUDA_MALLOC(&m_d_denoiseNormal, bufferSize);
     }
     
     // Setup denoiser
@@ -168,21 +153,14 @@ void Denoiser::denoise(CUdeviceptr input, CUdeviceptr output) {
 }
 
 void Denoiser::cleanup() {
-    if (m_d_denoiserState) cudaFree(reinterpret_cast<void*>(m_d_denoiserState));
-    if (m_d_denoiserScratch) cudaFree(reinterpret_cast<void*>(m_d_denoiserScratch));
-    if (m_d_denoiseInput) cudaFree(reinterpret_cast<void*>(m_d_denoiseInput));
-    if (m_d_denoiseOutput) cudaFree(reinterpret_cast<void*>(m_d_denoiseOutput));
-    if (m_d_denoiseAlbedo) cudaFree(reinterpret_cast<void*>(m_d_denoiseAlbedo));
-    if (m_d_denoiseNormal) cudaFree(reinterpret_cast<void*>(m_d_denoiseNormal));
-    if (m_denoiser) optixDenoiserDestroy(m_denoiser);
+    CUDA_FREE(m_d_denoiserState);
+    CUDA_FREE(m_d_denoiserScratch);
+    CUDA_FREE(m_d_denoiseInput);
+    CUDA_FREE(m_d_denoiseOutput);
+    CUDA_FREE(m_d_denoiseAlbedo);
+    CUDA_FREE(m_d_denoiseNormal);
+    OPTIX_DESTROY(m_denoiser, optixDenoiserDestroy);
     
-    m_denoiser = nullptr;
-    m_d_denoiserState = 0;
-    m_d_denoiserScratch = 0;
-    m_d_denoiseInput = 0;
-    m_d_denoiseOutput = 0;
-    m_d_denoiseAlbedo = 0;
-    m_d_denoiseNormal = 0;
     m_width = 0;
     m_height = 0;
 }

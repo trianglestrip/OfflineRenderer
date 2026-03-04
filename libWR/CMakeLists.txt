@@ -25,10 +25,13 @@ set(WR_CUDA_KERNELS
     "kernels/compact.cu"
 )
 
+# Set kernel output directory to build root for easy access
+set(WR_KERNEL_OUTPUT_DIR "${CMAKE_BINARY_DIR}")
+
 # Compile OptiX kernels to PTX
 foreach(KERNEL_FILE ${WR_OPTIX_KERNELS})
     get_filename_component(KERNEL_NAME ${KERNEL_FILE} NAME_WE)
-    set(PTX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${KERNEL_NAME}.ptx")
+    set(PTX_FILE "${WR_KERNEL_OUTPUT_DIR}/${KERNEL_NAME}.ptx")
     
     add_custom_command(
         OUTPUT ${PTX_FILE}
@@ -51,7 +54,7 @@ endforeach()
 # Compile CUDA kernels to CUBIN
 foreach(KERNEL_FILE ${WR_CUDA_KERNELS})
     get_filename_component(KERNEL_NAME ${KERNEL_FILE} NAME_WE)
-    set(CUBIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/${KERNEL_NAME}.cubin")
+    set(CUBIN_FILE "${WR_KERNEL_OUTPUT_DIR}/${KERNEL_NAME}.cubin")
     
     add_custom_command(
         OUTPUT ${CUBIN_FILE}

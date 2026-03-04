@@ -27,12 +27,13 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
         target_link_options(${TEST_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
     endif()
 
+    # Kernel files are now built directly to ${CMAKE_BINARY_DIR}, copy to test runtime dir
     add_custom_command(TARGET ${TEST_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "Copying kernel files to ${TEST_NAME} runtime directory"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_BINARY_DIR}/libWR/trace.ptx
-            ${CMAKE_BINARY_DIR}/libWR/shade.cubin
-            ${CMAKE_BINARY_DIR}/libWR/compact.cubin
+            ${CMAKE_BINARY_DIR}/trace.ptx
+            ${CMAKE_BINARY_DIR}/shade.cubin
+            ${CMAKE_BINARY_DIR}/compact.cubin
             $<TARGET_FILE_DIR:${TEST_NAME}>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/render_config.ini"

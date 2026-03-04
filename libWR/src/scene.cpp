@@ -1,5 +1,6 @@
 #include "wr/wr.h"
 #include "wr/types.h"
+#include "utils/cuda_utils.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda.h>
@@ -7,32 +8,6 @@
 #include <vector>
 #include <iostream>
 #include <stdexcept>
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t error = call; \
-        if (error != cudaSuccess) { \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(error)); \
-        } \
-    } while(0)
-
-#define CU_CHECK(call) \
-    do { \
-        CUresult result = call; \
-        if (result != CUDA_SUCCESS) { \
-            const char* errStr; \
-            cuGetErrorString(result, &errStr); \
-            throw std::runtime_error(std::string("CU error: ") + errStr); \
-        } \
-    } while(0)
-
-#define OPTIX_CHECK(call) \
-    do { \
-        OptixResult result = call; \
-        if (result != OPTIX_SUCCESS) { \
-            throw std::runtime_error(std::string("OptiX error: ") + optixGetErrorName(result)); \
-        } \
-    } while(0)
 
 namespace wr {
 

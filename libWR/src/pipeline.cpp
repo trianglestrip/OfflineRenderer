@@ -1,4 +1,5 @@
 #include "wr/wr.h"
+#include "utils/cuda_utils.h"
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
@@ -7,22 +8,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
-
-#define OPTIX_CHECK(call) \
-    do { \
-        OptixResult result = call; \
-        if (result != OPTIX_SUCCESS) { \
-            throw std::runtime_error(std::string("OptiX error: ") + optixGetErrorName(result)); \
-        } \
-    } while(0)
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t error = call; \
-        if (error != cudaSuccess) { \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(error)); \
-        } \
-    } while(0)
 
 namespace wr {
 
