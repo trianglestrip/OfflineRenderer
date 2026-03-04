@@ -189,6 +189,8 @@ int main(int argc, char* argv[]) {
             scene->setEnvironmentRadiance(Vec3(0.1f, 0.1f, 0.1f));
         } else {
             buildCornellBoxVar(scene);
+            // 与 libVLR 对齐：设置环境光，避免 miss 射线贡献为 0 导致画面全黑
+            scene->setEnvironmentRadiance(Vec3(0.08f, 0.08f, 0.08f));
         }
         scene->finalize();
         
@@ -208,10 +210,16 @@ int main(int argc, char* argv[]) {
         uint32_t width = cfg.width;
         uint32_t height = cfg.height;
         bool useSmallRes = (argc > 1 && std::strcmp(argv[1], "small") == 0);
+        bool useDebug1x1 = (argc > 1 && std::strcmp(argv[1], "1x1") == 0);
         if (useSmallRes && !useBox) {
             width = 256;
             height = 256;
             std::cout << "[Test] Using small resolution 256x256" << std::endl;
+        }
+        if (useDebug1x1 && !useBox) {
+            width = 1;
+            height = 1;
+            std::cout << "[Test] Debug mode: 1x1 resolution (isolate trace crash)" << std::endl;
         }
         const uint32_t spp = cfg.spp;
 
@@ -234,6 +242,13 @@ int main(int argc, char* argv[]) {
             savePNG(render_config::resolveGalleryPath("cornell_box_var_small.png").string().c_str(),
                     outputBuffer.data(), width, height);
             std::cout << "[Test] Test completed successfully (256x256)" << std::endl;
+            return 0;
+        }
+        if (useDebug1x1) {
+            std::vector<Vec3> outputBuffer(1);
+            renderer->render(scene, camera, outputBuffer.data(), 1, 1, spp,
+                             false, 0.0f, false, 0, 0);
+            std::cout << "[Test] Debug 1x1 completed (pixel: " << outputBuffer[0].x << "," << outputBuffer[0].y << "," << outputBuffer[0].z << ")" << std::endl;
             return 0;
         }
 
