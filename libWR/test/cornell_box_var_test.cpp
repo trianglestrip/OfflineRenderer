@@ -1,5 +1,5 @@
 #include <wr/wr.h>
-#include "utils/utils.h"
+#include "utils.h"
 #include <iostream>
 #include <cstring>
 #include <vector>
@@ -146,7 +146,7 @@ int main() {
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);
-    renderer->render(scene, camera, image.data(), config.width, config.height, config.spp);
+    renderer->render(scene, camera, image.data(), config.width, config.height, config.spp, config.denoiser);
     
     std::filesystem::path outputPath = utils::resolveGalleryPath("wr_cornell.png");
     utils::savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);

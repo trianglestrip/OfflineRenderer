@@ -1,6 +1,7 @@
 #include "wr/wr.h"
 #include "wr/types.h"
 #include "utils/utils.h"
+#include "denoiser.h"
 #include <optix.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
@@ -34,6 +35,8 @@ struct RendererImpl {
     CUdeviceptr d_launchParams = 0;
     CUdeviceptr d_launchParamsPtr = 0;
     CUdeviceptr d_compactParams = 0;
+    
+    Denoiser denoiser;
     
     uint32_t numPixels = 0;
     uint32_t maxRays = 0;
@@ -124,7 +127,8 @@ void Renderer::render(Scene* scene,
                       Vec3* outputBuffer,
                       uint32_t width,
                       uint32_t height,
-                      uint32_t spp) {
+                      uint32_t spp,
+                      bool denoiser) {
     std::cout << "[Renderer] Starting render: " << width << "x" << height << " @ " << spp << " spp" << std::endl;
     
     m_impl->allocateBuffers(width, height);
@@ -253,6 +257,13 @@ void Renderer::render(Scene* scene,
     }
     
     std::cout << std::endl;
+    
+    // 执行降噪
+    if (denoiser) {
+        DenoiserConfig config;
+        m_impl->denoiser.initialize(width, height, config);
+        m_impl->denoiser.denoise(m_impl->d_accumBuffer, m_impl->d_accumBuffer);
+    }
     
     std::vector<float3> hostAccum(m_impl->numPixels);
     CUDA_CHECK(cudaMemcpy(

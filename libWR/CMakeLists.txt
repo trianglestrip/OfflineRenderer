@@ -79,6 +79,7 @@ set(WR_SOURCES
     "src/scene.cpp"
     "src/renderer.cpp"
     "src/pipeline.cpp"
+    "src/denoiser.cpp"
     "utils/image_utils.cpp"
     "utils/math_utils.cpp"
     "utils/file_utils.cpp"

@@ -63,7 +63,8 @@ public:
                 Vec3* outputBuffer,
                 uint32_t width,
                 uint32_t height,
-                uint32_t spp = 1);
+                uint32_t spp = 1,
+                bool denoiser = false);
 
 private:
     RendererImpl* m_impl;
