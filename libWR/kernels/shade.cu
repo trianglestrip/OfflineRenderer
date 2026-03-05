@@ -209,7 +209,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
             }
         }
         
-        ray.throughput = ray.throughput * mat.albedo;
+        // Note: Glass is pure specular, no albedo absorption
+        // Fresnel equation already handles energy distribution
         ray.prevWasDelta = true;  // Glass is delta distribution
         
         // Russian Roulette
