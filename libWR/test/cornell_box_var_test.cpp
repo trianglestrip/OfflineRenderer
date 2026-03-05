@@ -1,5 +1,8 @@
 #include <wr/wr.h>
-#include "utils.h"
+#include "helpers/geometry.h"
+#include "helpers/image.h"
+#include "helpers/file.h"
+#include "helpers/config.h"
 #include <iostream>
 #include <cstring>
 #include <vector>
@@ -8,10 +11,8 @@
 #include <algorithm>
 #include <filesystem>
 
-#include "render_config.h"
-
 using namespace wr;
-using namespace wr::utils;
+using namespace test_helpers;
 
 void buildCornellBoxVar(Scene* scene) {
     uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
@@ -61,13 +62,13 @@ void buildCornellBoxVar(Scene* scene) {
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        utils::createSphere(verts, inds, -0.7f, 0.5f, -0.7f, 0.5f, 32, 24);
+        createSphere(verts, inds, -0.7f, 0.5f, -0.7f, 0.5f, 32, 24);
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        utils::createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.5f, 32, 24);
+        createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.5f, 32, 24);
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     
@@ -130,7 +131,7 @@ void buildCornellBoxVar(Scene* scene) {
 int main() {
     std::cout << "=== libWR Cornell Box Variation Test ===" << std::endl;
     
-    RenderConfig config = render_config::load("cornell_box_var");
+    RenderConfig config = config::load("cornell_box_var");
     
     wr::Context context;
     wr::Scene* scene = context.createScene();
@@ -139,17 +140,17 @@ int main() {
     scene->finalize();
     wr::Renderer* renderer = context.createRenderer();
     wr::Camera camera;
-    camera.position = {0.0f,1.0f,3.0f};
-    camera.target = {0.0f,1.0f,0.0f};
-    camera.up = {0.0f,1.0f,0.0f};
-    camera.fovY = 45.0f * 3.14159265f / 180.0f;
+    camera.position = Vec3(0.0f, 1.0f, 3.0f);
+    camera.target = Vec3(0.0f, 1.0f, 0.0f);
+    camera.up = Vec3(0.0f, 1.0f, 0.0f);
+    camera.fovY = glm::radians(45.0f);
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);
     renderer->render(scene, camera, image.data(), config.width, config.height, config.spp, config.denoiser);
     
-    std::filesystem::path outputPath = utils::resolveGalleryPath("wr_cornell.png");
-    utils::savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);
+    std::filesystem::path outputPath = resolveGalleryPath("wr_cornell.png");
+    savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);
     
     return 0;
 }

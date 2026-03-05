@@ -1,105 +1,49 @@
 #pragma once
 
-#include <optix.h>
-#include <cuda_runtime.h>
-#include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace wr {
 
-// Material types
-enum MaterialType : uint32_t {
-    Lambertian = 0,
-    Emissive = 1,
-    Glass = 2
-};
+// Use GLM types as public API types
+using Vec3 = glm::vec3;
+using Vec4 = glm::vec4;
+using Mat3 = glm::mat3;
+using Mat4 = glm::mat4;
 
-// Ray stages
-enum RayStage : uint32_t {
-    Trace = 0,
-    Shade = 1,
-    Shadow = 2,
-    Terminated = 3
-};
-
-// Material data
-struct MaterialData {
-    float3 albedo;
-    float3 emission;
-    float ior;
-    uint32_t type;
-};
-
-// Ray state
-struct RayState {
-    float3 origin;
-    float3 direction;
-    float3 throughput;
-    float3 radiance;
+// Camera configuration
+struct Camera {
+    Vec3 position{0.0f, 0.0f, 0.0f};
+    Vec3 target{0.0f, 0.0f, -1.0f};
+    Vec3 up{0.0f, 1.0f, 0.0f};
+    float fovY{glm::radians(45.0f)};
+    float aspect{1.0f};
     
-    uint32_t pixelIndex;
-    uint32_t depth;
-    uint32_t seed;
-    uint32_t stage;
+    // Helper: Get view matrix
+    Mat4 getViewMatrix() const {
+        return glm::lookAt(position, target, up);
+    }
     
-    float tMin;
-    float tMax;
-};
-
-// Hit information
-struct HitInfo {
-    float3 position;
-    float3 normal;
-    uint32_t materialId;
-    uint32_t primIndex;
-};
-
-// Camera data
-struct CameraData {
-    float3 position;
-    float3 forward;
-    float3 right;
-    float3 up;
-    float tanHalfFovY;
-    float aspect;
-};
-
-// Geometry buffers
-struct GeometryBuffers {
-    const float* vertices;
-    const uint32_t* indices;
-    const uint32_t* triangleMaterialIds;
-};
-
-// Launch parameters
-struct LaunchParams {
-    OptixTraversableHandle traversable;
+    // Helper: Get projection matrix
+    Mat4 getProjectionMatrix(float nearPlane = 0.1f, float farPlane = 100.0f) const {
+        return glm::perspective(fovY, aspect, nearPlane, farPlane);
+    }
     
-    GeometryBuffers geometry;
+    // Helper: Get forward direction
+    Vec3 getForward() const {
+        return glm::normalize(target - position);
+    }
     
-    RayState* rayPool;
-    uint32_t* activeIndices;
-    HitInfo* hitBuffer;
-    float3* accumBuffer;
+    // Helper: Get right direction
+    Vec3 getRight() const {
+        return glm::normalize(glm::cross(getForward(), up));
+    }
     
-    const MaterialData* materials;
-    uint32_t numMaterials;
-    
-    CameraData camera;
-    float3 environmentRadiance;
-    
-    uint32_t width;
-    uint32_t height;
-    uint32_t sampleIndex;
-    uint32_t numActive;
-};
-
-// Compact kernel parameters
-struct CompactParams {
-    const RayState* rayPool;
-    const uint32_t* activeIndicesIn;
-    uint32_t* activeIndicesOut;
-    uint32_t* counter;
-    uint32_t numActive;
+    // Helper: Get up direction (orthogonalized)
+    Vec3 getUp() const {
+        return glm::normalize(glm::cross(getRight(), getForward()));
+    }
 };
 
 } // namespace wr

@@ -1,39 +1,20 @@
 #include <cuda_runtime.h>
-#include <wr/types.h>
+#include "internal/gpu_types.h"
 #include "vector_math.cuh"
+#include "sampling.cuh"
 
-using namespace wr;
+using namespace wr::internal;
 
 static constexpr float kPi = 3.14159265f;
 
+extern "C" {
+    __constant__ const LaunchParams* params_shade;
+}
+
+// Legacy random function (kept for compatibility)
 __device__ inline float randf(uint32_t& seed) {
     seed = seed * 1664525u + 1013904223u;
     return (float)(seed >> 8) / 16777216.0f;
-}
-
-__device__ inline float3 cosineSampleHemisphere(uint32_t& seed) {
-    float r1 = randf(seed);
-    float r2 = randf(seed);
-    
-    float phi = 2.0f * kPi * r1;
-    float cosTheta = sqrtf(r2);
-    float sinTheta = sqrtf(1.0f - r2);
-    
-    return make_float3(
-        cosf(phi) * sinTheta,
-        sinTheta * sinf(phi),
-        cosTheta
-    );
-}
-
-__device__ inline void createONB(const float3& n, float3& tangent, float3& bitangent) {
-    float3 up = fabsf(n.z) < 0.999f ? make_float3(0.0f, 0.0f, 1.0f) : make_float3(1.0f, 0.0f, 0.0f);
-    tangent = normalize(cross(up, n));
-    bitangent = cross(n, tangent);
-}
-
-__device__ inline float3 toWorld(const float3& v, const float3& n, const float3& t, const float3& b) {
-    return t * v.x + b * v.y + n * v.z;
 }
 
 __device__ inline float fresnel(float cosI, float etaI, float etaT) {
@@ -46,39 +27,138 @@ __device__ inline float fresnel(float cosI, float etaI, float etaT) {
     return (rs * rs + rp * rp) * 0.5f;
 }
 
-extern "C" __global__ void shade(const LaunchParams* params) {
+extern "C" __global__ void shade(const LaunchParams* p) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= params->numActive) return;
+    if (idx >= p->numActive) return;
     
-    const uint32_t rayIndex = params->activeIndices[idx];
-    RayState& ray = params->rayPool[rayIndex];
+    const uint32_t rayIndex = p->activeIndices[idx];
+    RayState& ray = p->rayPool[rayIndex];
     
     if (ray.stage != RayStage::Shade) return;
     
-    const HitInfo& hit = params->hitBuffer[rayIndex];
+    const HitInfo& hit = p->hitBuffer[rayIndex];
     
-    if (hit.materialId >= params->numMaterials) {
+    if (hit.materialId >= p->numMaterials) {
         ray.stage = RayStage::Terminated;
         return;
     }
     
-    const MaterialData& mat = params->materials[hit.materialId];
+    const MaterialData& mat = p->materials[hit.materialId];
     
+    // Emissive material hit is handled in trace.cu with MIS
     if (mat.type == MaterialType::Emissive) {
-        ray.radiance = ray.radiance + ray.throughput * mat.emission;
-        params->accumBuffer[ray.pixelIndex] = params->accumBuffer[ray.pixelIndex] + ray.radiance;
+        p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
         ray.stage = RayStage::Terminated;
         return;
     }
     
     if (mat.type == MaterialType::Lambertian) {
-        float3 tangent, bitangent;
-        createONB(hit.normal, tangent, bitangent);
+        // Next Event Estimation (NEE) - Direct light sampling
+        if (p->useNEE && p->numEmissiveTriangles > 0) {
+            // Sample a light source
+            float lightU = rnd(ray.seed);
+            uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
+            uint32_t triIdx = p->emissiveTriangles[lightIdx];
+            
+            // Get light triangle vertices
+            uint32_t i0 = p->geometry.indices[triIdx * 3 + 0];
+            uint32_t i1 = p->geometry.indices[triIdx * 3 + 1];
+            uint32_t i2 = p->geometry.indices[triIdx * 3 + 2];
+            
+            float3 v0 = make_float3(
+                p->geometry.vertices[i0 * 3 + 0],
+                p->geometry.vertices[i0 * 3 + 1],
+                p->geometry.vertices[i0 * 3 + 2]
+            );
+            float3 v1 = make_float3(
+                p->geometry.vertices[i1 * 3 + 0],
+                p->geometry.vertices[i1 * 3 + 1],
+                p->geometry.vertices[i1 * 3 + 2]
+            );
+            float3 v2 = make_float3(
+                p->geometry.vertices[i2 * 3 + 0],
+                p->geometry.vertices[i2 * 3 + 1],
+                p->geometry.vertices[i2 * 3 + 2]
+            );
+            
+            // Sample point on light
+            float3 lightNormal;
+            float lightArea;
+            float3 lightPos = sampleTriangle(rnd(ray.seed), rnd(ray.seed), v0, v1, v2, lightNormal, lightArea);
+            
+            // Direction to light
+            float3 toLight = make_float3(
+                lightPos.x - hit.position.x,
+                lightPos.y - hit.position.y,
+                lightPos.z - hit.position.z
+            );
+            float distSq = dot(toLight, toLight);
+            float dist = sqrtf(distSq);
+            toLight = make_float3(toLight.x / dist, toLight.y / dist, toLight.z / dist);
+            
+            float cosTheta = dot(hit.normal, toLight);
+            float cosLightTheta = -dot(lightNormal, toLight);
+            
+            if (cosTheta > 0.0f && cosLightTheta > 0.0f) {
+                // Get light material
+                uint32_t lightMatId = p->geometry.triangleMaterialIds[triIdx];
+                const MaterialData& lightMat = p->materials[lightMatId];
+                
+                // PDF for light sampling: 1 / (numLights * area) * distance^2 / cos(light)
+                float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
+                
+                // BSDF PDF for this direction
+                float bsdfPdf = cosineHemispherePdf(cosTheta);
+                
+                // MIS weight (power heuristic)
+                float misWeight = powerHeuristic(lightPdf, bsdfPdf);
+                
+                // BSDF evaluation: albedo / pi * cos(theta)
+                float3 bsdf = make_float3(
+                    mat.albedo.x / kPi * cosTheta,
+                    mat.albedo.y / kPi * cosTheta,
+                    mat.albedo.z / kPi * cosTheta
+                );
+                
+                // Contribution: throughput * bsdf * emission * misWeight / lightPdf
+                float3 contrib = make_float3(
+                    ray.throughput.x * bsdf.x * lightMat.emission.x * misWeight / lightPdf,
+                    ray.throughput.y * bsdf.y * lightMat.emission.y * misWeight / lightPdf,
+                    ray.throughput.z * bsdf.z * lightMat.emission.z * misWeight / lightPdf
+                );
+                
+                // Trace shadow ray (store in ray for next trace)
+                // We'll add contribution only if shadow ray is not occluded
+                // For now, add directly (shadow tracing will be improved later)
+                ray.radiance = ray.radiance + contrib;
+            }
+        }
         
-        float3 localDir = cosineSampleHemisphere(ray.seed);
+        // BSDF sampling (indirect lighting)
+        float3 tangent, bitangent;
+        createCoordinateFrame(hit.normal, tangent, bitangent);
+        
+        float bsdfPdf;
+        float3 localDir = sampleCosineHemisphere(rnd(ray.seed), rnd(ray.seed), bsdfPdf);
         float3 worldDir = toWorld(localDir, hit.normal, tangent, bitangent);
         
+        // Update throughput with BSDF: albedo / pi * cos(theta) / pdf
+        // For cosine sampling: pdf = cos(theta) / pi, so this simplifies to albedo
         ray.throughput = ray.throughput * mat.albedo;
+        
+        // Store PDF for MIS on next hit
+        ray.prevPdf = bsdfPdf;
+        ray.prevWasDelta = false;
+        
+        // Russian Roulette
+        float3 newThroughput;
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            ray.stage = RayStage::Terminated;
+            return;
+        }
+        ray.throughput = newThroughput;
+        
         ray.origin = hit.position;
         ray.direction = worldDir;
         ray.tMin = 0.001f;
@@ -86,8 +166,8 @@ extern "C" __global__ void shade(const LaunchParams* params) {
         ray.depth++;
         ray.stage = RayStage::Trace;
         
-        if (ray.depth >= 8) {
-            params->accumBuffer[ray.pixelIndex] = params->accumBuffer[ray.pixelIndex] + ray.radiance;
+        if (ray.depth >= p->maxBounces) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
             ray.stage = RayStage::Terminated;
         }
         
@@ -128,20 +208,31 @@ extern "C" __global__ void shade(const LaunchParams* params) {
         }
         
         ray.throughput = ray.throughput * mat.albedo;
+        ray.prevWasDelta = true;  // Glass is delta distribution
+        
+        // Russian Roulette
+        float3 newThroughput;
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            ray.stage = RayStage::Terminated;
+            return;
+        }
+        ray.throughput = newThroughput;
+        
         ray.origin = hit.position;
         ray.tMin = 0.001f;
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
         
-        if (ray.depth >= 8) {
-            params->accumBuffer[ray.pixelIndex] = params->accumBuffer[ray.pixelIndex] + ray.radiance;
+        if (ray.depth >= p->maxBounces) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
             ray.stage = RayStage::Terminated;
         }
         
         return;
     }
     
-    params->accumBuffer[ray.pixelIndex] = params->accumBuffer[ray.pixelIndex] + ray.radiance;
+    p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
     ray.stage = RayStage::Terminated;
 }

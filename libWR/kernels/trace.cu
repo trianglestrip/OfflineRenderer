@@ -1,9 +1,10 @@
 #include <optix.h>
 #include <cuda_runtime.h>
-#include <wr/types.h>
+#include "internal/gpu_types.h"
 #include "vector_math.cuh"
+#include "sampling.cuh"
 
-using namespace wr;
+using namespace wr::internal;
 
 static constexpr float kPi = 3.14159265f;
 
@@ -53,6 +54,9 @@ extern "C" __global__ void __raygen__trace() {
             ray.seed = seed;
             ray.tMin = 0.001f;
             ray.tMax = 1e20f;
+            ray.isFirstHit = true;
+            ray.prevPdf = 1.0f;
+            ray.prevWasDelta = true;  // Camera ray is delta
         }
     }
     
@@ -130,6 +134,50 @@ extern "C" __global__ void __closesthit__trace() {
     hit.normal = normal;
     hit.materialId = params->geometry.triangleMaterialIds[primIdx];
     hit.primIndex = primIdx;
+    
+    // Record first hit albedo and normal for denoiser guide layers
+    if (ray.isFirstHit) {
+        uint32_t matId = hit.materialId;
+        if (matId < params->numMaterials) {
+            const MaterialData& mat = params->materials[matId];
+            
+            // Accumulate albedo and normal (will be averaged over samples)
+            if (params->sampleIndex == 0) {
+                params->albedoBuffer[ray.pixelIndex] = mat.albedo;
+                params->normalBuffer[ray.pixelIndex] = normal;
+            } else {
+                params->albedoBuffer[ray.pixelIndex] = params->albedoBuffer[ray.pixelIndex] + mat.albedo;
+                params->normalBuffer[ray.pixelIndex] = params->normalBuffer[ray.pixelIndex] + normal;
+            }
+        }
+        ray.isFirstHit = false;
+    }
+    
+    // Handle emissive hit with MIS
+    if (hit.materialId < params->numMaterials) {
+        const MaterialData& mat = params->materials[hit.materialId];
+        
+        if (mat.type == MaterialType::Emissive) {
+            float misWeight = 1.0f;
+            
+            // Apply MIS if not from camera or delta surface
+            if (params->useNEE && ray.depth > 0 && !ray.prevWasDelta && params->numEmissiveTriangles > 0) {
+                // Calculate light sampling PDF
+                float3 e1 = v1 - v0;
+                float3 e2 = v2 - v0;
+                float area = 0.5f * length(cross(e1, e2));
+                
+                float distSq = t * t;
+                float cosLight = fabsf(dot(normal, direction));
+                float lightPdf = distSq / (cosLight * area * params->numEmissiveTriangles);
+                
+                // MIS weight: power heuristic
+                misWeight = powerHeuristic(ray.prevPdf, lightPdf);
+            }
+            
+            ray.radiance = ray.radiance + ray.throughput * mat.emission * misWeight;
+        }
+    }
     
     optixSetPayload_0(1);
 }

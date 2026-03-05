@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
-#include <wr/types.h>
+#include "internal/gpu_types.h"
 
-using namespace wr;
+using namespace wr::internal;
 
 extern "C" __global__ void compact(const CompactParams* params) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;

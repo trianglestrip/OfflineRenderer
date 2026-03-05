@@ -41,6 +41,7 @@ foreach(KERNEL_FILE ${WR_OPTIX_KERNELS})
             -o ${PTX_FILE}
             ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL_FILE}
             -I${CMAKE_CURRENT_SOURCE_DIR}/include
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src
             -I${OptiX_INSTALL_DIR}/include
             --gpu-architecture=compute_75
             --use_fast_math
@@ -65,6 +66,7 @@ foreach(KERNEL_FILE ${WR_CUDA_KERNELS})
             -o ${CUBIN_FILE}
             ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL_FILE}
             -I${CMAKE_CURRENT_SOURCE_DIR}/include
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src
             -I${OptiX_INSTALL_DIR}/include
             --gpu-architecture=sm_75
             --use_fast_math
@@ -78,27 +80,42 @@ endforeach()
 
 add_custom_target(wr_kernels ALL DEPENDS ${WR_KERNEL_FILES})
 
-# Minimal sources for libWR
-set(WR_SOURCES
-    "src/context.cpp"
-    "src/scene.cpp"
-    "src/renderer.cpp"
-    "src/pipeline.cpp"
-    "src/denoiser.cpp"
-    "utils/image_utils.cpp"
-    "utils/math_utils.cpp"
-    "utils/file_utils.cpp"
+# Core sources (pure C++, no GPU dependencies)
+# Note: Utils (geometry, image, file) moved to test/helpers/
+set(WR_CORE_SOURCES
+    # Empty - all utils moved to test helpers
 )
 
-# Public headers
-set(WR_HEADERS
+# Internal sources (GPU/OptiX dependent)
+set(WR_INTERNAL_SOURCES
+    "src/internal/context.cpp"
+    "src/internal/scene.cpp"
+    "src/internal/renderer.cpp"
+    "src/internal/pipeline.cpp"
+    "src/internal/denoiser.cpp"
+)
+
+# Public headers (core API only, no utils)
+set(WR_PUBLIC_HEADERS
     "include/wr/wr.h"
     "include/wr/types.h"
+    "include/wr/context.h"
+    "include/wr/scene.h"
+    "include/wr/renderer.h"
+)
+
+# Internal headers
+set(WR_INTERNAL_HEADERS
+    "src/internal/gpu_types.h"
+    "src/internal/cuda_utils.h"
+    "src/internal/denoiser.h"
 )
 
 add_library(${TARGET_NAME} STATIC
-    ${WR_SOURCES}
-    ${WR_HEADERS}
+    ${WR_CORE_SOURCES}
+    ${WR_INTERNAL_SOURCES}
+    ${WR_PUBLIC_HEADERS}
+    ${WR_INTERNAL_HEADERS}
 )
 
 # Set output directory for static library to bin/Release
@@ -112,10 +129,13 @@ add_dependencies(${TARGET_NAME} wr_kernels)
 target_include_directories(${TARGET_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/glm>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/glm
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/stb
         ${OptiX_INSTALL_DIR}/include
         ${CUDAToolkit_INCLUDE_DIRS}
 )

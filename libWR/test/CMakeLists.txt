@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 3.26)
 
+# Test helper sources
+set(TEST_HELPERS
+    "helpers/geometry.cpp"
+    "helpers/image.cpp"
+    "helpers/file.cpp"
+)
+
 function(add_wr_test TEST_NAME SOURCE_FILE)
-    add_executable(${TEST_NAME} ${SOURCE_FILE})
+    add_executable(${TEST_NAME} ${SOURCE_FILE} ${TEST_HELPERS})
 
     target_include_directories(${TEST_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
-        ${CMAKE_CURRENT_SOURCE_DIR}/..
-        ${CMAKE_CURRENT_SOURCE_DIR}/../utils
-        ${OptiX_INSTALL_DIR}/include
-        ${CUDAToolkit_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../stb
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/glm
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/stb
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
