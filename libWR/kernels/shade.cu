@@ -153,7 +153,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // Update throughput with BSDF: albedo / pi * cos(theta) / pdf
         // For cosine sampling: pdf = cos(theta) / pi, so this simplifies to albedo
-        ray.throughput = ray.throughput * mat.albedo;
+        float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+        ray.throughput = ray.throughput * albedo;
         
         // Store PDF for MIS on next hit
         ray.prevPdf = bsdfPdf;
@@ -168,9 +169,14 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         }
         ray.throughput = newThroughput;
         
-        ray.origin = hit.position;
         ray.direction = worldDir;
-        ray.tMin = 0.001f;
+        
+        // Offset origin along normal to avoid self-intersection
+        // Offset in the direction of the outgoing ray relative to the surface
+        float offset = 0.001f;
+        float3 offsetDir = dot(worldDir, hit.normal) > 0.0f ? hit.normal : -hit.normal;
+        ray.origin = hit.position + offsetDir * offset;
+        ray.tMin = 0.0f;
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
@@ -201,18 +207,22 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         float F = fresnel(cosI, etaI, etaT);
         
         float r = randf(ray.seed);
+        bool isReflection = false;
         if (r < F) {
             float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
             ray.direction = reflected;
+            isReflection = true;
         } else {
             float eta = etaI / etaT;
             float k = 1.0f - eta * eta * (1.0f - cosI * cosI);
             if (k < 0.0f) {
                 float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
                 ray.direction = reflected;
+                isReflection = true;
             } else {
                 float3 refracted = eta * ray.direction + n * (eta * cosI - sqrtf(k));
                 ray.direction = refracted;
+                isReflection = false;
             }
         }
         
@@ -229,8 +239,12 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         }
         ray.throughput = newThroughput;
         
-        ray.origin = hit.position;
-        ray.tMin = 0.001f;
+        // Offset origin to avoid self-intersection
+        // Use the direction of the new ray to determine offset direction
+        float offset = 0.001f;
+        float3 offsetDir = dot(ray.direction, hit.normal) > 0.0f ? hit.normal : -hit.normal;
+        ray.origin = hit.position + offsetDir * offset;
+        ray.tMin = 0.0f;
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
@@ -295,8 +309,12 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 
                 float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
                 
+                // Extract float3 from float4
+                float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+                float3 lightEmission = make_float3(lightMat.emission.x, lightMat.emission.y, lightMat.emission.z);
+                
                 // Evaluate GGX BRDF (returns BRDF only, not BRDF * cosTheta)
-                float3 brdf = evaluateGGXReflection(wo, toLight, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
+                float3 brdf = evaluateGGXReflection(wo, toLight, hit.normal, albedo, mat.roughness, mat.metallic, mat.ior);
                 
                 // Calculate GGX PDF for MIS
                 float bsdfPdf = ggxReflectionPdf(wo, toLight, hit.normal, mat.roughness);
@@ -304,9 +322,9 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 
                 // Contribution: throughput * BRDF * emission * cosTheta * MIS / lightPdf
                 float3 contrib = make_float3(
-                    ray.throughput.x * brdf.x * lightMat.emission.x * cosTheta * misWeight / lightPdf,
-                    ray.throughput.y * brdf.y * lightMat.emission.y * cosTheta * misWeight / lightPdf,
-                    ray.throughput.z * brdf.z * lightMat.emission.z * cosTheta * misWeight / lightPdf
+                    ray.throughput.x * brdf.x * lightEmission.x * cosTheta * misWeight / lightPdf,
+                    ray.throughput.y * brdf.y * lightEmission.y * cosTheta * misWeight / lightPdf,
+                    ray.throughput.z * brdf.z * lightEmission.z * cosTheta * misWeight / lightPdf
                 );
                 
                 ray.radiance = ray.radiance + contrib;
@@ -330,8 +348,11 @@ extern "C" __global__ void shade(const LaunchParams* p) {
             return;
         }
         
+        // Extract float3 from float4
+        float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+        
         // Evaluate BRDF (returns BRDF only, not BRDF * cosTheta)
-        float3 brdf = evaluateGGXReflection(wo, wi, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
+        float3 brdf = evaluateGGXReflection(wo, wi, hit.normal, albedo, mat.roughness, mat.metallic, mat.ior);
         
         // Check for NaN or Inf in BRDF
         if (isnan(brdf.x) || isnan(brdf.y) || isnan(brdf.z) ||
@@ -361,9 +382,14 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         }
         ray.throughput = newThroughput;
         
-        ray.origin = hit.position;
         ray.direction = wi;
-        ray.tMin = 0.001f;
+        
+        // Offset origin along normal to avoid self-intersection
+        // Offset in the direction of the outgoing ray relative to the surface
+        float offset = 0.001f;
+        float3 offsetDir = dot(wi, hit.normal) > 0.0f ? hit.normal : -hit.normal;
+        ray.origin = hit.position + offsetDir * offset;
+        ray.tMin = 0.0f;
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;

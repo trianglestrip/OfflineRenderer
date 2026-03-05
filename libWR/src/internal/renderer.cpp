@@ -146,10 +146,10 @@ void Renderer::render(Scene* scene,
     Vec3 up = camera.getUp();
 
     CameraData camData;
-    camData.position = {camera.position.x, camera.position.y, camera.position.z};
-    camData.forward = {forward.x, forward.y, forward.z};
-    camData.right = {right.x, right.y, right.z};
-    camData.up = {up.x, up.y, up.z};
+    camData.position = make_float4(camera.position.x, camera.position.y, camera.position.z, 0.0f);
+    camData.forward = make_float4(forward.x, forward.y, forward.z, 0.0f);
+    camData.right = make_float4(right.x, right.y, right.z, 0.0f);
+    camData.up = make_float4(up.x, up.y, up.z, 0.0f);
     camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
     camData.aspect = camera.aspect;
     
@@ -170,7 +170,7 @@ void Renderer::render(Scene* scene,
     hostParams.numEmissiveTriangles = scene->getNumEmissiveTriangles();
     hostParams.camera = camData;
     Vec3 envRad = scene->getEnvironmentRadiance();
-    hostParams.environmentRadiance = make_float3(envRad.x, envRad.y, envRad.z);
+    hostParams.environmentRadiance = make_float4(envRad.x, envRad.y, envRad.z, 0.0f);
     hostParams.width = width;
     hostParams.height = height;
     hostParams.useNEE = renderParams.useNEE;

@@ -39,19 +39,26 @@ extern "C" __global__ void __raygen__trace() {
             uint32_t py = rayIndex / params->width;
             
             uint32_t seed = (rayIndex * 1664525u + params->sampleIndex * 1013904223u) ^ 0x9e3779b9u;
+            uint32_t jitterSeed = seed;  // Separate seed for jittering
             
-            float r1 = randf(seed);
-            float r2 = randf(seed);
+            float r1 = randf(jitterSeed);
+            float r2 = randf(jitterSeed);
             
             float ndcX = (2.0f * (px + r1) / params->width - 1.0f) * params->camera.aspect;
             float ndcY = 1.0f - 2.0f * (py + r2) / params->height;
             
-            float3 rayDir = params->camera.forward + 
-                           params->camera.right * ndcX * params->camera.tanHalfFovY +
-                           params->camera.up * ndcY * params->camera.tanHalfFovY;
+            // Extract xyz from float4
+            float3 camPos = make_float3(params->camera.position.x, params->camera.position.y, params->camera.position.z);
+            float3 camForward = make_float3(params->camera.forward.x, params->camera.forward.y, params->camera.forward.z);
+            float3 camRight = make_float3(params->camera.right.x, params->camera.right.y, params->camera.right.z);
+            float3 camUp = make_float3(params->camera.up.x, params->camera.up.y, params->camera.up.z);
+            
+            float3 rayDir = camForward + 
+                           camRight * ndcX * params->camera.tanHalfFovY +
+                           camUp * ndcY * params->camera.tanHalfFovY;
             rayDir = normalize(rayDir);
             
-            ray.origin = params->camera.position;
+            ray.origin = camPos;
             ray.direction = rayDir;
             ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
             ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
@@ -59,7 +66,7 @@ extern "C" __global__ void __raygen__trace() {
             ray.depth = 0;
             ray.stage = RayStage::Trace;
             ray.seed = seed;
-            ray.tMin = 0.001f;
+            ray.tMin = 0.0001f;  // Camera ray can use smaller epsilon
             ray.tMax = 1e20f;
             ray.isFirstHit = true;
             ray.prevPdf = 1.0f;
@@ -83,7 +90,8 @@ extern "C" __global__ void __raygen__trace() {
         );
         
         if (hitFlag == 0) {
-            ray.radiance = ray.radiance + ray.throughput * params->environmentRadiance;
+            float3 envRad = make_float3(params->environmentRadiance.x, params->environmentRadiance.y, params->environmentRadiance.z);
+            ray.radiance = ray.radiance + ray.throughput * envRad;
             atomicAddFloat3(&params->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
         } else {
@@ -149,12 +157,15 @@ extern "C" __global__ void __closesthit__trace() {
         if (matId < params->numMaterials) {
             const MaterialData& mat = params->materials[matId];
             
+            // Extract float3 from float4
+            float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+            
             // Accumulate albedo and normal (will be averaged over samples)
             if (params->sampleIndex == 0) {
-                params->albedoBuffer[ray.pixelIndex] = mat.albedo;
+                params->albedoBuffer[ray.pixelIndex] = albedo;
                 params->normalBuffer[ray.pixelIndex] = normal;
             } else {
-                atomicAddFloat3(&params->albedoBuffer[ray.pixelIndex], mat.albedo);
+                atomicAddFloat3(&params->albedoBuffer[ray.pixelIndex], albedo);
                 atomicAddFloat3(&params->normalBuffer[ray.pixelIndex], normal);
             }
         }
@@ -183,7 +194,8 @@ extern "C" __global__ void __closesthit__trace() {
                 misWeight = powerHeuristic(ray.prevPdf, lightPdf);
             }
             
-            ray.radiance = ray.radiance + ray.throughput * mat.emission * misWeight;
+            float3 emission = make_float3(mat.emission.x, mat.emission.y, mat.emission.z);
+            ray.radiance = ray.radiance + ray.throughput * emission * misWeight;
         }
     }
     

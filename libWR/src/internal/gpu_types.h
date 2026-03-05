@@ -26,12 +26,10 @@ enum RayStage : uint32_t {
 
 // Material data (GPU)
 struct MaterialData {
-    float3 albedo;
-    float3 emission;
+    float4 albedo;       // xyz = albedo, w unused
+    float4 emission;     // xyz = emission, w unused
     float ior;
     uint32_t type;
-    
-    // GGX parameters
     float roughness;     // Alpha parameter for GGX
     float metallic;      // 0 = dielectric, 1 = metal
 };
@@ -81,12 +79,14 @@ struct HitInfo {
 
 // Camera data (GPU)
 struct CameraData {
-    float3 position;
-    float3 forward;
-    float3 right;
-    float3 up;
+    float4 position;    // xyz = position, w unused
+    float4 forward;     // xyz = forward, w unused
+    float4 right;       // xyz = right, w unused
+    float4 up;          // xyz = up, w unused
     float tanHalfFovY;
     float aspect;
+    float _padding0;
+    float _padding1;
 };
 
 // Geometry buffers
@@ -120,7 +120,7 @@ struct LaunchParams {
     uint32_t numEmissiveTriangles;
     
     CameraData camera;
-    float3 environmentRadiance;
+    float4 environmentRadiance;  // xyz = radiance, w unused
     
     uint32_t width;
     uint32_t height;
@@ -128,9 +128,10 @@ struct LaunchParams {
     uint32_t numActive;
     
     // Rendering config
-    bool useNEE;               // Enable Next Event Estimation
+    uint32_t useNEE;           // Changed from bool for alignment
     uint32_t maxBounces;
-    float rrStartDepth;        // Russian Roulette start depth
+    float rrStartDepth;
+    float _padding;            // Align to 16 bytes
 };
 
 // Compact kernel parameters

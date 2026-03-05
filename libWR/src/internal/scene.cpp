@@ -56,8 +56,8 @@ Scene::~Scene() { delete m_impl; }
 
 uint32_t Scene::addLambertianMaterial(const Vec3& albedo) {
     MaterialData mat = {};
-    mat.albedo = {albedo.x, albedo.y, albedo.z};
-    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.albedo = make_float4(albedo.x, albedo.y, albedo.z, 0.0f);
+    mat.emission = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     mat.ior = 1.0f;
     mat.type = MaterialType::Lambertian;
     mat.roughness = 1.0f;
@@ -69,8 +69,8 @@ uint32_t Scene::addLambertianMaterial(const Vec3& albedo) {
 
 uint32_t Scene::addEmissiveMaterial(const Vec3& emission) {
     MaterialData mat = {};
-    mat.albedo = {0.0f, 0.0f, 0.0f};
-    mat.emission = {emission.x, emission.y, emission.z};
+    mat.albedo = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    mat.emission = make_float4(emission.x, emission.y, emission.z, 0.0f);
     mat.ior = 1.0f;
     mat.type = MaterialType::Emissive;
     mat.roughness = 0.0f;
@@ -82,8 +82,8 @@ uint32_t Scene::addEmissiveMaterial(const Vec3& emission) {
 
 uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
     MaterialData mat = {};
-    mat.albedo = {albedo.x, albedo.y, albedo.z};
-    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.albedo = make_float4(albedo.x, albedo.y, albedo.z, 0.0f);
+    mat.emission = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     mat.ior = ior;
     mat.type = MaterialType::Glass;
     mat.roughness = 0.0f;
@@ -95,8 +95,8 @@ uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
 
 uint32_t Scene::addGGXReflectionMaterial(const Vec3& albedo, float roughness, float metallic) {
     MaterialData mat = {};
-    mat.albedo = {albedo.x, albedo.y, albedo.z};
-    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.albedo = make_float4(albedo.x, albedo.y, albedo.z, 0.0f);
+    mat.emission = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     mat.ior = 1.5f;  // Default IOR for dielectric
     mat.type = MaterialType::GGXReflection;
     mat.roughness = roughness;
@@ -108,8 +108,8 @@ uint32_t Scene::addGGXReflectionMaterial(const Vec3& albedo, float roughness, fl
 
 uint32_t Scene::addGGXTransmissionMaterial(const Vec3& albedo, float roughness, float ior) {
     MaterialData mat = {};
-    mat.albedo = {albedo.x, albedo.y, albedo.z};
-    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.albedo = make_float4(albedo.x, albedo.y, albedo.z, 0.0f);
+    mat.emission = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     mat.ior = ior;
     mat.type = MaterialType::GGXTransmission;
     mat.roughness = roughness;
