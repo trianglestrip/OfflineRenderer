@@ -112,8 +112,11 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 uint32_t lightMatId = p->geometry.triangleMaterialIds[triIdx];
                 const MaterialData& lightMat = p->materials[lightMatId];
                 
-                // PDF for light sampling: 1 / (numLights * area) * distance^2 / cos(light)
-                float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
+                // PDF for light sampling (solid angle)
+                // PDF_area = 1 / (numLights * area)
+                // PDF_solidAngle = PDF_area * distSq / cosLightTheta
+                float pdfArea = 1.0f / (p->numEmissiveTriangles * lightArea);
+                float lightPdf = pdfArea * distSq / fmaxf(cosLightTheta, 1e-8f);
                 
                 // BSDF PDF for this direction
                 float bsdfPdf = cosineHemispherePdf(cosTheta);
@@ -121,18 +124,22 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 // MIS weight (power heuristic)
                 float misWeight = powerHeuristic(lightPdf, bsdfPdf);
                 
+                // Extract float3 from float4
+                float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+                float3 lightEmission = make_float3(lightMat.emission.x, lightMat.emission.y, lightMat.emission.z);
+                
                 // BSDF evaluation: albedo / pi * cos(theta)
                 float3 bsdf = make_float3(
-                    mat.albedo.x / kPi * cosTheta,
-                    mat.albedo.y / kPi * cosTheta,
-                    mat.albedo.z / kPi * cosTheta
+                    albedo.x / kPi * cosTheta,
+                    albedo.y / kPi * cosTheta,
+                    albedo.z / kPi * cosTheta
                 );
                 
                 // Contribution: throughput * bsdf * emission * misWeight / lightPdf
                 float3 contrib = make_float3(
-                    ray.throughput.x * bsdf.x * lightMat.emission.x * misWeight / lightPdf,
-                    ray.throughput.y * bsdf.y * lightMat.emission.y * misWeight / lightPdf,
-                    ray.throughput.z * bsdf.z * lightMat.emission.z * misWeight / lightPdf
+                    ray.throughput.x * bsdf.x * lightEmission.x * misWeight / lightPdf,
+                    ray.throughput.y * bsdf.y * lightEmission.y * misWeight / lightPdf,
+                    ray.throughput.z * bsdf.z * lightEmission.z * misWeight / lightPdf
                 );
                 
                 // Trace shadow ray to check visibility
@@ -307,7 +314,9 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 uint32_t lightMatId = p->geometry.triangleMaterialIds[triIdx];
                 const MaterialData& lightMat = p->materials[lightMatId];
                 
-                float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
+                // PDF for light sampling (solid angle)
+                float pdfArea = 1.0f / (p->numEmissiveTriangles * lightArea);
+                float lightPdf = pdfArea * distSq / fmaxf(cosLightTheta, 1e-8f);
                 
                 // Extract float3 from float4
                 float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);

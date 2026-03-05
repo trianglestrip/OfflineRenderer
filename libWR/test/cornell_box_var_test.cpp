@@ -21,9 +21,9 @@ void buildCornellBoxVar(Scene* scene) {
     uint32_t lightMat = scene->addEmissiveMaterial(Vec3(40.0f, 40.0f, 40.0f));
     uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 1.5f);
     
-    // GGX materials for testing
-    uint32_t roughMetalMat = scene->addGGXReflectionMaterial(Vec3(1.0f, 0.85f, 0.3f), 0.2f, 1.0f);  // Rough gold
-    uint32_t smoothMetalMat = scene->addGGXReflectionMaterial(Vec3(0.95f, 0.95f, 0.95f), 0.05f, 1.0f);  // Smooth silver
+    // Temporarily use Lambertian for debugging
+    uint32_t roughMetalMat = scene->addLambertianMaterial(Vec3(1.0f, 0.85f, 0.3f));  // Gold color
+    uint32_t smoothMetalMat = scene->addLambertianMaterial(Vec3(0.95f, 0.95f, 0.95f));  // Silver color
     
     const float L = -1.5f, R = 1.5f;
     const float B = 0.0f, T = 3.0f;
@@ -62,6 +62,8 @@ void buildCornellBoxVar(Scene* scene) {
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
     }
+    // Temporarily remove spheres for debugging
+    /*
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
@@ -74,6 +76,7 @@ void buildCornellBoxVar(Scene* scene) {
         createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.4f, 32, 24);
         scene->addTriangleMesh(std::span(verts), std::span(inds), smoothMetalMat);  // Smooth silver sphere
     }
+    */
     
     // Add rough gold box in the center
     {
@@ -150,7 +153,16 @@ int main() {
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);
-    renderer->render(scene, camera, image.data(), config.width, config.height, config.spp, config.denoiser);
+    
+    // Test with NEE disabled to diagnose diagonal black lines
+    wr::RenderParams renderParams;
+    renderParams.width = config.width;
+    renderParams.height = config.height;
+    renderParams.spp = config.spp;
+    renderParams.denoiser.enabled = config.denoiser;
+    renderParams.useNEE = true;  // Re-enable NEE with fixed PDF
+    
+    renderer->render(scene, camera, image.data(), renderParams);
     
     std::filesystem::path outputPath = resolveGalleryPath("wr_cornell.png");
     savePNG(outputPath.string().c_str(), image.data(), config.width, config.height);
