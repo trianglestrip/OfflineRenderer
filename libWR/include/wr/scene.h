@@ -30,6 +30,8 @@ public:
     uint32_t addLambertianMaterial(const Vec3& albedo);
     uint32_t addEmissiveMaterial(const Vec3& emission);
     uint32_t addGlassMaterial(const Vec3& albedo, float ior);
+    uint32_t addGGXReflectionMaterial(const Vec3& albedo, float roughness, float metallic = 0.0f);
+    uint32_t addGGXTransmissionMaterial(const Vec3& albedo, float roughness, float ior);
 
     // Geometry
     void addTriangleMesh(std::span<const float> vertices,

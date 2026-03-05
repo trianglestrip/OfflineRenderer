@@ -48,6 +48,7 @@ Saved gallery\wr_cornell.png
   - Lambertian（漫反射）材质
   - Emissive（自发光）材质
   - Glass（玻璃/折射）材质，支持 IOR 参数
+  - **GGX 微表面材质**（PBR）：支持 roughness 和 metallic 参数
 - **环境光照**：支持均匀环境光
 - **光源管理**：自动构建发光三角形列表和重要性采样 CDF
 
@@ -89,9 +90,17 @@ libVLR 支持的材质类型：
 - **各向异性 BRDF**：支持沿切线方向的各向异性反射
 - **Mixed BSDF**：多材质混合
 
-**libWR 当前状态**：仅支持 Lambertian、Emissive、Glass 三种基础材质
+**libWR 当前状态**：
+- ✅ Lambertian（漫反射）
+- ✅ Emissive（自发光）
+- ✅ Glass（折射）
+- ✅ **GGX 微表面 BRDF**（支持 roughness 和 metallic）
 
-**下一步**：实现 GGX 微表面材质（PBR 标配）
+**待实现**：
+- ❌ GGX 微表面 BSDF（粗糙玻璃）
+- ❌ Fresnel-blended Lambertian
+- ❌ 各向异性 BRDF
+- ❌ Mixed BSDF
 
 #### 3. Shader Node 系统
 libVLR 的核心特性之一：
@@ -296,4 +305,4 @@ libVLR 提供：
 
 ---
 
-**当前版本**：v0.2.0 - NEE + MIS + Russian Roulette (2026-03-05)
+**当前版本**：v0.3.0 - GGX Microfacet BRDF (2026-03-05)

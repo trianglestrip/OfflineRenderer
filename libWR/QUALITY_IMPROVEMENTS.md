@@ -177,9 +177,41 @@ libVLR 使用光谱采样（`WavelengthSamples`），而 libWR 使用 RGB。
 
 ---
 
+### 5. GGX 微表面材质 (2026-03-05) ✅
+
+**实现内容**：
+- 添加 `MaterialType::GGXReflection` 和 `MaterialType::GGXTransmission`
+- 材质参数：`roughness`（粗糙度）、`metallic`（金属度）
+- 实现 GGX NDF (Normal Distribution Function)
+- 实现 Smith G1/G 遮蔽-阴影函数
+- 实现 Fresnel-Schlick 近似
+- 实现 GGX VNDF 重要性采样（Heitz 2018）
+- 公共 API：`Scene::addGGXReflectionMaterial()` 和 `Scene::addGGXTransmissionMaterial()`
+
+**文件修改**：
+- `libWR/kernels/ggx.cuh`: 新增 GGX BRDF/BSDF 函数库
+- `libWR/src/internal/gpu_types.h`: 添加 GGX 材质类型和参数
+- `libWR/include/wr/scene.h`: 添加 GGX 材质创建接口
+- `libWR/src/internal/scene.cpp`: 实现 GGX 材质创建
+- `libWR/kernels/shade.cu`: 实现 GGX 材质着色（NEE + BSDF sampling）
+
+**测试结果**：
+- 粗糙金属（roughness=0.2, metallic=1.0）：正确渲染金色粗糙表面
+- 光滑金属（roughness=0.05, metallic=1.0）：正确渲染银色镜面反射
+- 与 Lambertian、Glass 材质混合场景正常工作
+- 512x512 @ 64 spp 渲染时间 ~12s (MX550)
+
+**视觉效果**：
+- 金属材质呈现正确的菲涅尔反射
+- 粗糙度参数正确控制高光大小
+- 能量守恒，物理正确
+
+---
+
 ## 参考资料
 
 - [libVLR path_tracing.cu](../libVLR_reference/libVLR/GPU_kernels/path_tracing.cu)
 - [OptiX Denoiser Guide](https://raytracing-docs.nvidia.com/optix8/guide/index.html#denoiser)
 - [Physically Based Rendering (PBR) Book](https://www.pbr-book.org/)
 - [Importance Sampling Techniques](https://graphics.stanford.edu/courses/cs348b-03/papers/veach-chapter9.pdf)
+- [Heitz 2018: Sampling the GGX Distribution of Visible Normals](https://jcgt.org/published/0007/04/01/)

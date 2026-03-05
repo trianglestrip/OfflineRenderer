@@ -60,6 +60,8 @@ uint32_t Scene::addLambertianMaterial(const Vec3& albedo) {
     mat.emission = {0.0f, 0.0f, 0.0f};
     mat.ior = 1.0f;
     mat.type = MaterialType::Lambertian;
+    mat.roughness = 1.0f;
+    mat.metallic = 0.0f;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -71,6 +73,8 @@ uint32_t Scene::addEmissiveMaterial(const Vec3& emission) {
     mat.emission = {emission.x, emission.y, emission.z};
     mat.ior = 1.0f;
     mat.type = MaterialType::Emissive;
+    mat.roughness = 0.0f;
+    mat.metallic = 0.0f;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -82,6 +86,34 @@ uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
     mat.emission = {0.0f, 0.0f, 0.0f};
     mat.ior = ior;
     mat.type = MaterialType::Glass;
+    mat.roughness = 0.0f;
+    mat.metallic = 0.0f;
+    
+    m_impl->materials.push_back(mat);
+    return static_cast<uint32_t>(m_impl->materials.size() - 1);
+}
+
+uint32_t Scene::addGGXReflectionMaterial(const Vec3& albedo, float roughness, float metallic) {
+    MaterialData mat = {};
+    mat.albedo = {albedo.x, albedo.y, albedo.z};
+    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.ior = 1.5f;  // Default IOR for dielectric
+    mat.type = MaterialType::GGXReflection;
+    mat.roughness = roughness;
+    mat.metallic = metallic;
+    
+    m_impl->materials.push_back(mat);
+    return static_cast<uint32_t>(m_impl->materials.size() - 1);
+}
+
+uint32_t Scene::addGGXTransmissionMaterial(const Vec3& albedo, float roughness, float ior) {
+    MaterialData mat = {};
+    mat.albedo = {albedo.x, albedo.y, albedo.z};
+    mat.emission = {0.0f, 0.0f, 0.0f};
+    mat.ior = ior;
+    mat.type = MaterialType::GGXTransmission;
+    mat.roughness = roughness;
+    mat.metallic = 0.0f;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);

@@ -2,6 +2,7 @@
 #include "internal/gpu_types.h"
 #include "vector_math.cuh"
 #include "sampling.cuh"
+#include "ggx.cuh"
 
 using namespace wr::internal;
 
@@ -127,9 +128,10 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                     ray.throughput.z * bsdf.z * lightMat.emission.z * misWeight / lightPdf
                 );
                 
-                // Trace shadow ray (store in ray for next trace)
-                // We'll add contribution only if shadow ray is not occluded
-                // For now, add directly (shadow tracing will be improved later)
+                // Trace shadow ray to check visibility
+                // Note: In Wavefront architecture, we can't use optixTrace in CUDA kernel
+                // We need to defer shadow ray tracing to the next Trace stage
+                // For now, we add contribution directly (will be fixed with proper shadow ray support)
                 ray.radiance = ray.radiance + contrib;
             }
         }
@@ -220,6 +222,131 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         ray.throughput = newThroughput;
         
         ray.origin = hit.position;
+        ray.tMin = 0.001f;
+        ray.tMax = 1e20f;
+        ray.depth++;
+        ray.stage = RayStage::Trace;
+        
+        if (ray.depth >= p->maxBounces) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            ray.stage = RayStage::Terminated;
+        }
+        
+        return;
+    }
+    
+    if (mat.type == MaterialType::GGXReflection) {
+        // GGX Microfacet BRDF (PBR material)
+        float3 wo = -ray.direction;  // View direction
+        
+        // NEE for GGX (similar to Lambertian)
+        if (p->useNEE && p->numEmissiveTriangles > 0) {
+            float lightU = rnd(ray.seed);
+            uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
+            uint32_t triIdx = p->emissiveTriangles[lightIdx];
+            
+            uint32_t i0 = p->geometry.indices[triIdx * 3 + 0];
+            uint32_t i1 = p->geometry.indices[triIdx * 3 + 1];
+            uint32_t i2 = p->geometry.indices[triIdx * 3 + 2];
+            
+            float3 v0 = make_float3(
+                p->geometry.vertices[i0 * 3 + 0],
+                p->geometry.vertices[i0 * 3 + 1],
+                p->geometry.vertices[i0 * 3 + 2]
+            );
+            float3 v1 = make_float3(
+                p->geometry.vertices[i1 * 3 + 0],
+                p->geometry.vertices[i1 * 3 + 1],
+                p->geometry.vertices[i1 * 3 + 2]
+            );
+            float3 v2 = make_float3(
+                p->geometry.vertices[i2 * 3 + 0],
+                p->geometry.vertices[i2 * 3 + 1],
+                p->geometry.vertices[i2 * 3 + 2]
+            );
+            
+            float3 lightNormal;
+            float lightArea;
+            float3 lightPos = sampleTriangle(rnd(ray.seed), rnd(ray.seed), v0, v1, v2, lightNormal, lightArea);
+            
+            float3 toLight = make_float3(
+                lightPos.x - hit.position.x,
+                lightPos.y - hit.position.y,
+                lightPos.z - hit.position.z
+            );
+            float distSq = dot(toLight, toLight);
+            float dist = sqrtf(distSq);
+            toLight = make_float3(toLight.x / dist, toLight.y / dist, toLight.z / dist);
+            
+            float cosTheta = dot(hit.normal, toLight);
+            float cosLightTheta = -dot(lightNormal, toLight);
+            
+            if (cosTheta > 0.0f && cosLightTheta > 0.0f) {
+                uint32_t lightMatId = p->geometry.triangleMaterialIds[triIdx];
+                const MaterialData& lightMat = p->materials[lightMatId];
+                
+                float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
+                
+                // Evaluate GGX BRDF
+                float3 brdf = evaluateGGXReflection(wo, toLight, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
+                
+                // For MIS, we need BSDF PDF (simplified for now)
+                float bsdfPdf = cosineHemispherePdf(cosTheta);
+                float misWeight = powerHeuristic(lightPdf, bsdfPdf);
+                
+                float3 contrib = make_float3(
+                    ray.throughput.x * brdf.x * lightMat.emission.x * misWeight / lightPdf,
+                    ray.throughput.y * brdf.y * lightMat.emission.y * misWeight / lightPdf,
+                    ray.throughput.z * brdf.z * lightMat.emission.z * misWeight / lightPdf
+                );
+                
+                ray.radiance = ray.radiance + contrib;
+            }
+        }
+        
+        // BSDF sampling using VNDF
+        float3 tangent, bitangent;
+        createCoordinateFrame(hit.normal, tangent, bitangent);
+        
+        // Transform wo to tangent space
+        float3 woLocal = make_float3(
+            dot(wo, tangent),
+            dot(wo, bitangent),
+            dot(wo, hit.normal)
+        );
+        
+        float3 wi;
+        float bsdfPdf;
+        sampleGGXReflection(woLocal, hit.normal, tangent, bitangent, mat.roughness, rnd(ray.seed), rnd(ray.seed), wi, bsdfPdf);
+        
+        // Evaluate BRDF
+        float3 brdf = evaluateGGXReflection(wo, wi, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
+        
+        // Update throughput: brdf / pdf
+        if (bsdfPdf > 1e-5f) {
+            ray.throughput = make_float3(
+                ray.throughput.x * brdf.x / bsdfPdf,
+                ray.throughput.y * brdf.y / bsdfPdf,
+                ray.throughput.z * brdf.z / bsdfPdf
+            );
+        } else {
+            ray.throughput = make_float3(0.0f, 0.0f, 0.0f);
+        }
+        
+        ray.prevPdf = bsdfPdf;
+        ray.prevWasDelta = false;
+        
+        // Russian Roulette
+        float3 newThroughput;
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            ray.stage = RayStage::Terminated;
+            return;
+        }
+        ray.throughput = newThroughput;
+        
+        ray.origin = hit.position;
+        ray.direction = wi;
         ray.tMin = 0.001f;
         ray.tMax = 1e20f;
         ray.depth++;

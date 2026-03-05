@@ -11,7 +11,9 @@ namespace internal {
 enum MaterialType : uint32_t {
     Lambertian = 0,
     Emissive = 1,
-    Glass = 2
+    Glass = 2,
+    GGXReflection = 3,      // Microfacet reflection (metal/dielectric)
+    GGXTransmission = 4     // Microfacet transmission (rough glass)
 };
 
 // Ray stages
@@ -28,6 +30,10 @@ struct MaterialData {
     float3 emission;
     float ior;
     uint32_t type;
+    
+    // GGX parameters
+    float roughness;     // Alpha parameter for GGX
+    float metallic;      // 0 = dielectric, 1 = metal
 };
 
 // Light sample data (for NEE)
@@ -59,6 +65,10 @@ struct RayState {
     // For MIS (track previous PDF)
     float prevPdf;
     bool prevWasDelta;
+    
+    // For shadow rays (NEE visibility test)
+    float3 shadowContribution;  // Pending contribution from NEE
+    float shadowRayLength;      // Distance to light source
 };
 
 // Hit information (GPU)

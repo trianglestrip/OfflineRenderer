@@ -20,7 +20,10 @@ void buildCornellBoxVar(Scene* scene) {
     uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
     uint32_t lightMat = scene->addEmissiveMaterial(Vec3(40.0f, 40.0f, 40.0f));
     uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 1.5f);
-    uint32_t metalMat = scene->addLambertianMaterial(Vec3(0.9f, 0.7f, 0.1f)); // Yellow metal material
+    
+    // GGX materials for testing
+    uint32_t roughMetalMat = scene->addGGXReflectionMaterial(Vec3(1.0f, 0.85f, 0.3f), 0.2f, 1.0f);  // Rough gold
+    uint32_t smoothMetalMat = scene->addGGXReflectionMaterial(Vec3(0.95f, 0.95f, 0.95f), 0.05f, 1.0f);  // Smooth silver
     
     const float L = -1.5f, R = 1.5f;
     const float B = 0.0f, T = 3.0f;
@@ -68,11 +71,11 @@ void buildCornellBoxVar(Scene* scene) {
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.5f, 32, 24);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
+        createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.4f, 32, 24);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), smoothMetalMat);  // Smooth silver sphere
     }
     
-    // Add yellow metal box in the center
+    // Add rough gold box in the center
     {
         float boxSize = 0.2f;
         float boxY = 0.2f;
@@ -122,7 +125,7 @@ void buildCornellBoxVar(Scene* scene) {
             // Bottom face
             20, 21, 22, 20, 22, 23
         };
-        scene->addTriangleMesh(std::span(verts, 72), std::span(inds, 36), metalMat);
+        scene->addTriangleMesh(std::span(verts, 72), std::span(inds, 36), roughMetalMat);  // Rough gold box
     }
     
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;
