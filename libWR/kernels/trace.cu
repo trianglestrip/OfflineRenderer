@@ -12,6 +12,13 @@ extern "C" {
     __constant__ const LaunchParams* params;
 }
 
+// Atomic add for float3
+__device__ inline void atomicAddFloat3(float3* address, float3 value) {
+    atomicAdd(&address->x, value.x);
+    atomicAdd(&address->y, value.y);
+    atomicAdd(&address->z, value.z);
+}
+
 __device__ inline float randf(uint32_t& seed) {
     seed = seed * 1664525u + 1013904223u;
     return (float)(seed >> 8) / 16777216.0f;
@@ -58,30 +65,30 @@ extern "C" __global__ void __raygen__trace() {
             ray.prevPdf = 1.0f;
             ray.prevWasDelta = true;  // Camera ray is delta
         }
-    }
-    
-    uint32_t hitFlag = 0;
-    optixTrace(
-        params->traversable,
-        ray.origin,
-        ray.direction,
-        ray.tMin,
-        ray.tMax,
-        0.0f,
-        OptixVisibilityMask(255),
-        OPTIX_RAY_FLAG_NONE,
-        0,
-        1,
-        0,
-        hitFlag
-    );
-    
-    if (hitFlag == 0) {
-        ray.radiance = ray.radiance + ray.throughput * params->environmentRadiance;
-        params->accumBuffer[ray.pixelIndex] = params->accumBuffer[ray.pixelIndex] + ray.radiance;
-        ray.stage = RayStage::Terminated;
-    } else {
-        ray.stage = RayStage::Shade;
+        
+        uint32_t hitFlag = 0;
+        optixTrace(
+            params->traversable,
+            ray.origin,
+            ray.direction,
+            ray.tMin,
+            ray.tMax,
+            0.0f,
+            OptixVisibilityMask(255),
+            OPTIX_RAY_FLAG_NONE,
+            0,
+            1,
+            0,
+            hitFlag
+        );
+        
+        if (hitFlag == 0) {
+            ray.radiance = ray.radiance + ray.throughput * params->environmentRadiance;
+            atomicAddFloat3(&params->accumBuffer[ray.pixelIndex], ray.radiance);
+            ray.stage = RayStage::Terminated;
+        } else {
+            ray.stage = RayStage::Shade;
+        }
     }
 }
 
@@ -127,7 +134,8 @@ extern "C" __global__ void __closesthit__trace() {
     float3 e1 = v1 - v0;
     float3 e2 = v2 - v0;
     float3 geometricNormal = normalize(cross(e1, e2));
-    float3 normal = dot(geometricNormal, direction) < 0.0f ? geometricNormal : -geometricNormal;
+    // Flip normal to face the ray (if ray and normal are in the same direction, flip)
+    float3 normal = dot(geometricNormal, direction) > 0.0f ? -geometricNormal : geometricNormal;
     
     HitInfo& hit = params->hitBuffer[rayIndex];
     hit.position = hitPos;
@@ -146,8 +154,8 @@ extern "C" __global__ void __closesthit__trace() {
                 params->albedoBuffer[ray.pixelIndex] = mat.albedo;
                 params->normalBuffer[ray.pixelIndex] = normal;
             } else {
-                params->albedoBuffer[ray.pixelIndex] = params->albedoBuffer[ray.pixelIndex] + mat.albedo;
-                params->normalBuffer[ray.pixelIndex] = params->normalBuffer[ray.pixelIndex] + normal;
+                atomicAddFloat3(&params->albedoBuffer[ray.pixelIndex], mat.albedo);
+                atomicAddFloat3(&params->normalBuffer[ray.pixelIndex], normal);
             }
         }
         ray.isFirstHit = false;

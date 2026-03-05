@@ -12,6 +12,13 @@ extern "C" {
     __constant__ const LaunchParams* params_shade;
 }
 
+// Atomic add for float3
+__device__ inline void atomicAddFloat3(float3* address, float3 value) {
+    atomicAdd(&address->x, value.x);
+    atomicAdd(&address->y, value.y);
+    atomicAdd(&address->z, value.z);
+}
+
 // Legacy random function (kept for compatibility)
 __device__ inline float randf(uint32_t& seed) {
     seed = seed * 1664525u + 1013904223u;
@@ -31,12 +38,12 @@ __device__ inline float fresnel(float cosI, float etaI, float etaT) {
 extern "C" __global__ void shade(const LaunchParams* p) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= p->numActive) return;
-    
+
     const uint32_t rayIndex = p->activeIndices[idx];
     RayState& ray = p->rayPool[rayIndex];
-    
+
     if (ray.stage != RayStage::Shade) return;
-    
+
     const HitInfo& hit = p->hitBuffer[rayIndex];
     
     if (hit.materialId >= p->numMaterials) {
@@ -48,7 +55,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
     
     // Emissive material hit is handled in trace.cu with MIS
     if (mat.type == MaterialType::Emissive) {
-        p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+        atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
         ray.stage = RayStage::Terminated;
         return;
     }
@@ -155,7 +162,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         // Russian Roulette
         float3 newThroughput;
         if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;
         }
@@ -167,9 +174,9 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
-        
+
         if (ray.depth >= p->maxBounces) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
         }
         
@@ -216,7 +223,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         // Russian Roulette
         float3 newThroughput;
         if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;
         }
@@ -227,9 +234,9 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
-        
+
         if (ray.depth >= p->maxBounces) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
         }
         
@@ -240,8 +247,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         // GGX Microfacet BRDF (PBR material)
         float3 wo = -ray.direction;  // View direction
         
-        // NEE for GGX (similar to Lambertian)
-        if (p->useNEE && p->numEmissiveTriangles > 0) {
+        // NEE for GGX (temporarily disabled for debugging)
+        if (false && p->useNEE && p->numEmissiveTriangles > 0) {
             float lightU = rnd(ray.seed);
             uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
             uint32_t triIdx = p->emissiveTriangles[lightIdx];
@@ -288,17 +295,18 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 
                 float lightPdf = distSq / (cosLightTheta * lightArea * p->numEmissiveTriangles);
                 
-                // Evaluate GGX BRDF
+                // Evaluate GGX BRDF (returns BRDF only, not BRDF * cosTheta)
                 float3 brdf = evaluateGGXReflection(wo, toLight, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
                 
-                // For MIS, we need BSDF PDF (simplified for now)
-                float bsdfPdf = cosineHemispherePdf(cosTheta);
+                // Calculate GGX PDF for MIS
+                float bsdfPdf = ggxReflectionPdf(wo, toLight, hit.normal, mat.roughness);
                 float misWeight = powerHeuristic(lightPdf, bsdfPdf);
                 
+                // Contribution: throughput * BRDF * emission * cosTheta * MIS / lightPdf
                 float3 contrib = make_float3(
-                    ray.throughput.x * brdf.x * lightMat.emission.x * misWeight / lightPdf,
-                    ray.throughput.y * brdf.y * lightMat.emission.y * misWeight / lightPdf,
-                    ray.throughput.z * brdf.z * lightMat.emission.z * misWeight / lightPdf
+                    ray.throughput.x * brdf.x * lightMat.emission.x * cosTheta * misWeight / lightPdf,
+                    ray.throughput.y * brdf.y * lightMat.emission.y * cosTheta * misWeight / lightPdf,
+                    ray.throughput.z * brdf.z * lightMat.emission.z * cosTheta * misWeight / lightPdf
                 );
                 
                 ray.radiance = ray.radiance + contrib;
@@ -309,30 +317,37 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         float3 tangent, bitangent;
         createCoordinateFrame(hit.normal, tangent, bitangent);
         
-        // Transform wo to tangent space
-        float3 woLocal = make_float3(
-            dot(wo, tangent),
-            dot(wo, bitangent),
-            dot(wo, hit.normal)
-        );
-        
         float3 wi;
         float bsdfPdf;
-        sampleGGXReflection(woLocal, hit.normal, tangent, bitangent, mat.roughness, rnd(ray.seed), rnd(ray.seed), wi, bsdfPdf);
+        sampleGGXReflection(wo, hit.normal, tangent, bitangent, mat.roughness, rnd(ray.seed), rnd(ray.seed), wi, bsdfPdf);
         
-        // Evaluate BRDF
+        // Check if sampling failed
+        float cosTheta = dot(hit.normal, wi);
+        if (bsdfPdf < 1e-5f || cosTheta <= 0.0f) {
+            // Sampling failed, terminate ray
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
+            ray.stage = RayStage::Terminated;
+            return;
+        }
+        
+        // Evaluate BRDF (returns BRDF only, not BRDF * cosTheta)
         float3 brdf = evaluateGGXReflection(wo, wi, hit.normal, mat.albedo, mat.roughness, mat.metallic, mat.ior);
         
-        // Update throughput: brdf / pdf
-        if (bsdfPdf > 1e-5f) {
-            ray.throughput = make_float3(
-                ray.throughput.x * brdf.x / bsdfPdf,
-                ray.throughput.y * brdf.y / bsdfPdf,
-                ray.throughput.z * brdf.z / bsdfPdf
-            );
-        } else {
-            ray.throughput = make_float3(0.0f, 0.0f, 0.0f);
+        // Check for NaN or Inf in BRDF
+        if (isnan(brdf.x) || isnan(brdf.y) || isnan(brdf.z) ||
+            isinf(brdf.x) || isinf(brdf.y) || isinf(brdf.z)) {
+            // Invalid BRDF, terminate ray
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
+            ray.stage = RayStage::Terminated;
+            return;
         }
+        
+        // Update throughput: brdf * cosTheta / pdf
+        ray.throughput = make_float3(
+            ray.throughput.x * brdf.x * cosTheta / bsdfPdf,
+            ray.throughput.y * brdf.y * cosTheta / bsdfPdf,
+            ray.throughput.z * brdf.z * cosTheta / bsdfPdf
+        );
         
         ray.prevPdf = bsdfPdf;
         ray.prevWasDelta = false;
@@ -340,7 +355,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         // Russian Roulette
         float3 newThroughput;
         if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;
         }
@@ -352,15 +367,15 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         ray.tMax = 1e20f;
         ray.depth++;
         ray.stage = RayStage::Trace;
-        
+
         if (ray.depth >= p->maxBounces) {
-            p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
         }
         
         return;
     }
     
-    p->accumBuffer[ray.pixelIndex] = p->accumBuffer[ray.pixelIndex] + ray.radiance;
+    atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
     ray.stage = RayStage::Terminated;
 }

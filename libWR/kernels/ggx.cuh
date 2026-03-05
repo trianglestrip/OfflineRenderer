@@ -158,58 +158,145 @@ __device__ __forceinline__ float3 evaluateGGXReflection(
         kD.z * albedo.z / M_PI
     );
     
+    // Return BRDF only (caller will multiply by NoL if needed)
     return make_float3(
-        (diffuse.x + specular.x) * NoL,
-        (diffuse.y + specular.y) * NoL,
-        (diffuse.z + specular.z) * NoL
+        diffuse.x + specular.x,
+        diffuse.y + specular.y,
+        diffuse.z + specular.z
     );
 }
 
 // ============================================================================
-// GGX BRDF Sampling
+// GGX PDF Calculation (for MIS)
+// ============================================================================
+
+__device__ __forceinline__ float ggxReflectionPdf(
+    const float3& wo,      // Outgoing direction (to viewer)
+    const float3& wi,      // Incoming direction (to light)
+    const float3& n,       // Surface normal
+    float roughness
+) {
+    float NoV = fmaxf(0.0f, dot(n, wo));
+    float NoL = fmaxf(0.0f, dot(n, wi));
+    
+    if (NoV < 1e-5f || NoL < 1e-5f) {
+        return 0.0f;
+    }
+    
+    float3 h = normalize(make_float3(wo.x + wi.x, wo.y + wi.y, wo.z + wi.z));
+    float NoH = fmaxf(0.0f, dot(n, h));
+    float VoH = fmaxf(0.0f, dot(wo, h));
+    
+    if (VoH < 1e-5f) {
+        return 0.0f;
+    }
+    
+    float alpha = roughness * roughness;
+    float G1 = ggxG1(NoV, alpha);
+    float D = ggxD(NoH, alpha);
+    
+    // PDF = G1 * |V·m| * D / |V.z| / (4 * |V·m|) = G1 * D / (4 * |V.z|)
+    return G1 * D / (4.0f * NoV);
+}
+
+// ============================================================================
+// GGX BRDF Sampling (VNDF - Visible Normal Distribution Function)
+// Reference: libVLR implementation, based on Heitz 2018
 // ============================================================================
 
 __device__ __forceinline__ float3 sampleGGXReflection(
-    const float3& wo,      // Outgoing direction (to viewer)
+    const float3& wo,      // Outgoing direction (to viewer, world space)
     const float3& n,       // Surface normal
     const float3& tangent,
     const float3& bitangent,
     float roughness,
-    float u1, float u2,
+    float u0, float u1,
     float3& wi,            // Output: sampled incoming direction
     float& pdf
 ) {
     float alpha = roughness * roughness;
     
     // Transform wo to tangent space
-    float3 woLocal = make_float3(
+    float3 v = make_float3(
         dot(wo, tangent),
         dot(wo, bitangent),
         dot(wo, n)
     );
     
-    // Sample microfacet normal using VNDF
-    float3 hLocal = sampleGGXVNDF(woLocal, alpha, u1, u2);
+    // Stretch view direction
+    float3 sv = normalize(make_float3(alpha * v.x, alpha * v.y, v.z));
     
-    // Reflect wo around h to get wi
-    float VoH = dot(woLocal, hLocal);
-    float3 wiLocal = make_float3(
-        2.0f * VoH * hLocal.x - woLocal.x,
-        2.0f * VoH * hLocal.y - woLocal.y,
-        2.0f * VoH * hLocal.z - woLocal.z
+    // Build orthonormal basis
+    float distIn2D = sqrtf(sv.x * sv.x + sv.y * sv.y);
+    float3 T1, T2;
+    if (distIn2D > 1e-6f) {
+        float recDistIn2D = 1.0f / distIn2D;
+        T1 = make_float3(sv.y * recDistIn2D, -sv.x * recDistIn2D, 0.0f);
+        T2 = make_float3(T1.y * sv.z, -T1.x * sv.z, distIn2D);
+    } else {
+        T1 = make_float3(1.0f, 0.0f, 0.0f);
+        T2 = make_float3(0.0f, 1.0f, 0.0f);
+    }
+    
+    // Sample point with polar coordinates
+    float a = 1.0f / (1.0f + sv.z);
+    float r = sqrtf(u0);
+    float phi = M_PI * ((u1 < a) ? u1 / a : 1.0f + (u1 - a) / (1.0f - a));
+    float sinPhi = sinf(phi);
+    float cosPhi = cosf(phi);
+    float P1 = r * cosPhi;
+    float P2 = r * sinPhi * ((u1 < a) ? 1.0f : sv.z);
+    
+    // Compute normal in stretched space
+    float P1P1_P2P2 = P1 * P1 + P2 * P2;
+    float sqrtTerm = sqrtf(fmaxf(0.0f, 1.0f - P1P1_P2P2));
+    float3 mr = make_float3(
+        P1 * T1.x + P2 * T2.x + sqrtTerm * sv.x,
+        P1 * T1.y + P2 * T2.y + sqrtTerm * sv.y,
+        P1 * T1.z + P2 * T2.z + sqrtTerm * sv.z
     );
+    
+    // Unstretch
+    mr = normalize(make_float3(alpha * mr.x, alpha * mr.y, mr.z));
     
     // Transform back to world space
-    wi = make_float3(
-        tangent.x * wiLocal.x + bitangent.x * wiLocal.y + n.x * wiLocal.z,
-        tangent.y * wiLocal.x + bitangent.y * wiLocal.y + n.y * wiLocal.z,
-        tangent.z * wiLocal.x + bitangent.z * wiLocal.y + n.z * wiLocal.z
+    float3 hLocal = mr;
+    float3 h = make_float3(
+        tangent.x * hLocal.x + bitangent.x * hLocal.y + n.x * hLocal.z,
+        tangent.y * hLocal.x + bitangent.y * hLocal.y + n.y * hLocal.z,
+        tangent.z * hLocal.x + bitangent.z * hLocal.y + n.z * hLocal.z
     );
     
-    // Calculate PDF
-    float NoV = fmaxf(0.0f, woLocal.z);
-    float NoH = fmaxf(0.0f, hLocal.z);
-    pdf = ggxVNDFPdf(NoV, NoH, VoH, alpha) / (4.0f * VoH);
+    // Reflect wo around h to get wi
+    float VoH = dot(wo, h);
+    if (VoH <= 0.0f) {
+        pdf = 0.0f;
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+    
+    wi = make_float3(
+        2.0f * VoH * h.x - wo.x,
+        2.0f * VoH * h.y - wo.y,
+        2.0f * VoH * h.z - wo.z
+    );
+    
+    // Check if wi is in the correct hemisphere
+    float NoL = dot(n, wi);
+    if (NoL <= 0.0f) {
+        pdf = 0.0f;
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+    
+    // Calculate PDF using libVLR's formula
+    float NoV = fmaxf(0.0f, dot(n, wo));
+    float NoH = fmaxf(0.0f, dot(n, h));
+    float G1 = ggxG1(NoV, alpha);
+    float D = ggxD(NoH, alpha);
+    
+    // PDF_m = G1(v, m) * |v·m| * D(m) / |v.z|
+    // PDF_wi = PDF_m / (4 * |v·m|)
+    pdf = G1 * VoH * D / NoV / (4.0f * VoH);
+    pdf = G1 * D / (4.0f * NoV);
     
     return wi;
 }

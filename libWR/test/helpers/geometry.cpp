@@ -12,14 +12,17 @@ void createSphere(std::vector<float>& vertices,
     vertices.clear();
     indices.clear();
     
-    // Generate vertices
-    for (int ring = 0; ring <= rings; ++ring) {
-        float phi = PI * static_cast<float>(ring) / static_cast<float>(rings);
+    // Generate vertices using standard UV sphere parametrization
+    // latitude (phi): 0 at top pole, PI at bottom pole
+    // longitude (theta): 0 to 2*PI around equator
+    
+    for (int lat = 0; lat <= rings; ++lat) {
+        float phi = PI * float(lat) / float(rings);
         float sinPhi = std::sin(phi);
         float cosPhi = std::cos(phi);
         
-        for (int seg = 0; seg <= segments; ++seg) {
-            float theta = TWO_PI * static_cast<float>(seg) / static_cast<float>(segments);
+        for (int lon = 0; lon <= segments; ++lon) {
+            float theta = TWO_PI * float(lon) / float(segments);
             float sinTheta = std::sin(theta);
             float cosTheta = std::cos(theta);
             
@@ -34,18 +37,23 @@ void createSphere(std::vector<float>& vertices,
     }
     
     // Generate indices
-    for (int ring = 0; ring < rings; ++ring) {
-        for (int seg = 0; seg < segments; ++seg) {
-            uint32_t current = ring * (segments + 1) + seg;
-            uint32_t next = current + segments + 1;
+    for (int lat = 0; lat < rings; ++lat) {
+        for (int lon = 0; lon < segments; ++lon) {
+            uint32_t first = lat * (segments + 1) + lon;
+            uint32_t second = first + segments + 1;
             
-            indices.push_back(current);
-            indices.push_back(next);
-            indices.push_back(current + 1);
+            // Skip degenerate triangles at poles
+            if (lat != 0) {
+                indices.push_back(first);
+                indices.push_back(second);
+                indices.push_back(first + 1);
+            }
             
-            indices.push_back(current + 1);
-            indices.push_back(next);
-            indices.push_back(next + 1);
+            if (lat != rings - 1) {
+                indices.push_back(first + 1);
+                indices.push_back(second);
+                indices.push_back(second + 1);
+            }
         }
     }
 }
