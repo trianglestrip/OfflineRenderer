@@ -148,9 +148,9 @@ int main() {
     wr::Renderer* renderer = context.createRenderer();
     wr::Camera camera;
     camera.position = Vec3(0.0f, 1.5f, 4.5f);  // Higher and further back
-    camera.target = Vec3(0.0f, 0.8f, 0.0f);    // Look slightly down
+    camera.target = Vec3(0.0f, 1.3f, 0.0f);    // Look higher to see ceiling light
     camera.up = Vec3(0.0f, 1.0f, 0.0f);
-    camera.fovY = glm::radians(40.0f);         // Slightly narrower FOV
+    camera.fovY = glm::radians(45.0f);         // Wider FOV to see more of the ceiling
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);
