@@ -73,6 +73,10 @@ struct RayState {
     
     // RNG dimension counter (to avoid screen-space correlation)
     uint32_t rngDimension;
+    
+    // Current medium IOR for nested dielectrics (1.0 = air/vacuum)
+    // This must be initialized to 1.0f when ray is created
+    float currentIOR;
 };
 
 // Hit information (GPU)

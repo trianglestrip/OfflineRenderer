@@ -7,6 +7,7 @@ namespace internal {
 
 // Glass (Specular dielectric) material shader
 // Implements physically-based reflection and refraction with Fresnel equations
+// Supports nested dielectrics using ray.currentIOR
 __device__ __forceinline__ void shadeGlass(
     RayState& ray,
     const HitInfo& hit,
@@ -14,18 +15,21 @@ __device__ __forceinline__ void shadeGlass(
     const LaunchParams* p
 ) {
     float3 wo = -ray.direction;
-    float cosI = dot(wo, hit.normal);
     
-    float etaI = 1.0f;
-    float etaT = mat.ior;
-    float3 n = hit.normal;
+    // Determine if entering or exiting based on current medium
+    // If currentIOR == 1.0, we're in air entering glass
+    // If currentIOR == mat.ior, we're in glass exiting to air
+    float etaI = ray.currentIOR;
+    float etaT = (ray.currentIOR == 1.0f) ? mat.ior : 1.0f;
     
-    // Determine if entering or exiting the dielectric
+    // Use geometric normal to determine orientation
+    float cosI = dot(wo, hit.geometricNormal);
+    float3 n = hit.geometricNormal;
+    
+    // Flip normal if we're exiting (cosI < 0 means we're on the inside)
     if (cosI < 0.0f) {
         cosI = -cosI;
         n = -n;
-        etaI = mat.ior;
-        etaT = 1.0f;
     }
     
     // Fresnel reflectance
@@ -35,11 +39,11 @@ __device__ __forceinline__ void shadeGlass(
     float r = rnd_dim(ray.seed, ray.rngDimension++);
     
     if (r < F) {
-        // Fresnel reflection
+        // Fresnel reflection - stays in same medium
         float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
         ray.direction = reflected;
         
-        // Apply glass albedo (absorption coefficient)
+        // Apply glass albedo (absorption coefficient) for internal reflections
         float3 glassAlbedo = getMaterialAlbedo(mat, hit.uv,
             reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
         
@@ -48,6 +52,8 @@ __device__ __forceinline__ void shadeGlass(
             ray.throughput.y * glassAlbedo.y,
             ray.throughput.z * glassAlbedo.z
         );
+        
+        // currentIOR stays the same for reflection
     } else {
         // Attempt refraction
         float eta = etaI / etaT;
@@ -67,8 +73,10 @@ __device__ __forceinline__ void shadeGlass(
                 ray.throughput.y * glassAlbedo.y,
                 ray.throughput.z * glassAlbedo.z
             );
+            
+            // currentIOR stays the same for TIR
         } else {
-            // Successful refraction
+            // Successful refraction - switch medium
             float cosT = sqrtf(fmaxf(0.0f, 1.0f - sinT2));
             float3 refracted = eta * ray.direction + n * (eta * cosI - cosT);
             ray.direction = refracted;
@@ -90,6 +98,9 @@ __device__ __forceinline__ void shadeGlass(
                 ray.throughput.y * correction,
                 ray.throughput.z * correction
             );
+            
+            // Update current IOR - we've entered/exited the medium
+            ray.currentIOR = etaT;
         }
     }
     

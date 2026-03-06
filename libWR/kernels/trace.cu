@@ -122,6 +122,7 @@ extern "C" __global__ void __raygen__trace() {
             ray.prevWasDelta = true;  // Camera ray is delta
             ray.rngDimension = 0;  // Reset RNG dimension counter
             ray.neeDone = 0;
+            ray.currentIOR = 1.0f;  // Start in air/vacuum
         }
         
         uint32_t hitFlag = 0;
