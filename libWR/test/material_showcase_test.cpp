@@ -88,28 +88,28 @@ void buildMaterialShowcase(Scene* scene) {
     const float spacing = 1.0f;
     
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -1.5f, row1Y, row1Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), idealGlass);
+        createSphere(verts, norms, inds, -1.5f, row1Y, row1Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), idealGlass);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -0.5f, row1Y, row1Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass1);
+        createSphere(verts, norms, inds, -0.5f, row1Y, row1Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass1);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.5f, row1Y, row1Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass2);
+        createSphere(verts, norms, inds, 0.5f, row1Y, row1Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass2);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 1.5f, row1Y, row1Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass3);
+        createSphere(verts, norms, inds, 1.5f, row1Y, row1Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass3);
     }
     
     // Row 2: White metals - Middle row
@@ -117,28 +117,28 @@ void buildMaterialShowcase(Scene* scene) {
     const float row2Z = 0.0f;
     
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -1.5f, row2Y, row2Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), mirror);
+        createSphere(verts, norms, inds, -1.5f, row2Y, row2Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), mirror);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -0.5f, row2Y, row2Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughMetal1);
+        createSphere(verts, norms, inds, -0.5f, row2Y, row2Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughMetal1);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.5f, row2Y, row2Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughMetal2);
+        createSphere(verts, norms, inds, 0.5f, row2Y, row2Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughMetal2);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 1.5f, row2Y, row2Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughMetal3);
+        createSphere(verts, norms, inds, 1.5f, row2Y, row2Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughMetal3);
     }
     
     // Row 3: Colored metals - Front row
@@ -146,28 +146,28 @@ void buildMaterialShowcase(Scene* scene) {
     const float row3Z = 1.0f;
     
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -1.5f, row3Y, row3Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), gold);
+        createSphere(verts, norms, inds, -1.5f, row3Y, row3Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), gold);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -0.5f, row3Y, row3Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), copper);
+        createSphere(verts, norms, inds, -0.5f, row3Y, row3Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), copper);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.5f, row3Y, row3Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGold);
+        createSphere(verts, norms, inds, 0.5f, row3Y, row3Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGold);
     }
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 1.5f, row3Y, row3Z, sphereRadius, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughCopper);
+        createSphere(verts, norms, inds, 1.5f, row3Y, row3Z, sphereRadius, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughCopper);
     }
     
     std::cout << "[Test] Material showcase scene built (12 spheres in 3 rows)" << std::endl;

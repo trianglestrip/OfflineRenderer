@@ -152,10 +152,13 @@ void Renderer::render(Scene* scene,
     camData.up = make_float4(up.x, up.y, up.z, 0.0f);
     camData.tanHalfFovY = tanf(camera.fovY * 0.5f);
     camData.aspect = camera.aspect;
+    camData.focalDistance = camera.focalDistance;
+    camData.lensRadius = camera.lensRadius;
     
     LaunchParams hostParams = {};
     hostParams.traversable = static_cast<OptixTraversableHandle>(scene->getGASHandle());
     hostParams.geometry.vertices = reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getVerticesBuffer()));
+    hostParams.geometry.normals = scene->getNormalsBuffer() ? reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getNormalsBuffer())) : nullptr;
     hostParams.geometry.indices = reinterpret_cast<const uint32_t*>(static_cast<CUdeviceptr>(scene->getIndicesBuffer()));
     hostParams.geometry.triangleMaterialIds = reinterpret_cast<const uint32_t*>(static_cast<CUdeviceptr>(scene->getTriangleMaterialIdsBuffer()));
     hostParams.geometry.uvs = scene->getUVsBuffer() ? reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getUVsBuffer())) : nullptr;
@@ -174,11 +177,15 @@ void Renderer::render(Scene* scene,
     hostParams.camera = camData;
     Vec3 envRad = scene->getEnvironmentRadiance();
     hostParams.environmentRadiance = make_float4(envRad.x, envRad.y, envRad.z, 0.0f);
+    hostParams.envMap = static_cast<cudaTextureObject_t>(scene->getEnvironmentMapTexture());
+    hostParams.envMapWidth = scene->getEnvironmentMapWidth();
+    hostParams.envMapHeight = scene->getEnvironmentMapHeight();
     hostParams.width = width;
     hostParams.height = height;
     hostParams.useNEE = renderParams.useNEE;
     hostParams.maxBounces = renderParams.maxBounces;
     hostParams.rrStartDepth = renderParams.russianRouletteDepth;
+    hostParams.fireflyClamp = renderParams.fireflyClamp;
     
     for (uint32_t s = 0; s < spp; ++s) {
         std::cout << "\r[Renderer] Sample " << (s + 1) << "/" << spp << std::flush;

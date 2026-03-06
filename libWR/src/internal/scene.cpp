@@ -29,6 +29,7 @@ struct TextureData {
 
 struct SceneImpl {
     std::vector<float> vertices;
+    std::vector<float> normals;     // Vertex normals (3 floats per vertex)
     std::vector<float> uvs;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> triangleMaterialIds;
@@ -36,10 +37,17 @@ struct SceneImpl {
     std::vector<TextureData> textures;
     Vec3 environmentRadiance{0.0f, 0.0f, 0.0f};
     
+    // HDR Environment Map
+    cudaArray_t d_envArray = nullptr;
+    cudaTextureObject_t envMapTexture = 0;
+    int envMapWidth = 0;
+    int envMapHeight = 0;
+    
     std::vector<uint32_t> emissiveTriangles;
     std::vector<float> emissiveTriangleCDF;
     
     CUdeviceptr d_vertices = 0;
+    CUdeviceptr d_normals = 0;      // Device normals buffer
     CUdeviceptr d_indices = 0;
     CUdeviceptr d_triangleMaterialIds = 0;
     CUdeviceptr d_materials = 0;
@@ -54,6 +62,7 @@ struct SceneImpl {
     uint32_t numVertices = 0;
     uint32_t numTriangles = 0;
     bool hasUVs = false;
+    bool hasNormals = false;        // Track if normals are provided
     bool finalized = false;
     
     ~SceneImpl() {
@@ -62,6 +71,7 @@ struct SceneImpl {
             if (t.d_array) cudaFreeArray(t.d_array);
         }
         if (d_vertices) cuMemFree(d_vertices);
+        if (d_normals) cuMemFree(d_normals);
         if (d_indices) cuMemFree(d_indices);
         if (d_triangleMaterialIds) cuMemFree(d_triangleMaterialIds);
         if (d_materials) cuMemFree(d_materials);
@@ -70,6 +80,8 @@ struct SceneImpl {
         if (d_gasOutput) cuMemFree(d_gasOutput);
         if (d_emissiveTriangles) cuMemFree(d_emissiveTriangles);
         if (d_emissiveTriangleCDF) cuMemFree(d_emissiveTriangleCDF);
+        if (envMapTexture) cudaDestroyTextureObject(envMapTexture);
+        if (d_envArray) cudaFreeArray(d_envArray);
     }
 };
 
@@ -89,7 +101,7 @@ uint32_t Scene::addLambertianMaterial(const Vec3& albedo, uint32_t albedoTexture
     mat.roughness = 1.0f;
     mat.metallic = 0.0f;
     mat.albedoTextureId = albedoTextureId;
-    mat._padding = 0;
+    mat.normalTextureId = 0;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -104,7 +116,7 @@ uint32_t Scene::addEmissiveMaterial(const Vec3& emission) {
     mat.roughness = 0.0f;
     mat.metallic = 0.0f;
     mat.albedoTextureId = 0;
-    mat._padding = 0;
+    mat.normalTextureId = 0;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -119,7 +131,7 @@ uint32_t Scene::addGlassMaterial(const Vec3& albedo, float ior) {
     mat.roughness = 0.0f;
     mat.metallic = 0.0f;
     mat.albedoTextureId = 0;
-    mat._padding = 0;
+    mat.normalTextureId = 0;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -134,7 +146,7 @@ uint32_t Scene::addGGXReflectionMaterial(const Vec3& albedo, float roughness, fl
     mat.roughness = roughness;
     mat.metallic = metallic;
     mat.albedoTextureId = 0;
-    mat._padding = 0;
+    mat.normalTextureId = 0;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
@@ -149,10 +161,17 @@ uint32_t Scene::addGGXTransmissionMaterial(const Vec3& albedo, float roughness, 
     mat.roughness = roughness;
     mat.metallic = 0.0f;
     mat.albedoTextureId = 0;
-    mat._padding = 0;
+    mat.normalTextureId = 0;
     
     m_impl->materials.push_back(mat);
     return static_cast<uint32_t>(m_impl->materials.size() - 1);
+}
+
+void Scene::setMaterialNormalMap(uint32_t materialId, uint32_t normalTextureId) {
+    if (materialId >= m_impl->materials.size()) {
+        throw std::runtime_error("Invalid material ID");
+    }
+    m_impl->materials[materialId].normalTextureId = normalTextureId;
 }
 
 void Scene::addTriangleMesh(std::span<const float> verts,
@@ -165,13 +184,37 @@ void Scene::addTriangleMesh(std::span<const float> verts,
                             std::span<const uint32_t> inds,
                             std::span<const float> uvData,
                             uint32_t materialId) {
+    addTriangleMesh(verts, inds, std::span<const float>(), uvData, materialId);
+}
+
+void Scene::addTriangleMesh(std::span<const float> verts,
+                            std::span<const uint32_t> inds,
+                            std::span<const float> normalData,
+                            std::span<const float> uvData,
+                            uint32_t materialId) {
     uint32_t vertexOffset = static_cast<uint32_t>(m_impl->vertices.size() / 3);
     
+    // Add vertices
     for (float v : verts) {
         m_impl->vertices.push_back(v);
     }
     
     size_t numNewVerts = verts.size() / 3;
+    
+    // Add normals (if provided)
+    if (!normalData.empty() && normalData.size() >= numNewVerts * 3) {
+        m_impl->hasNormals = true;
+        for (float n : normalData) {
+            m_impl->normals.push_back(n);
+        }
+    } else {
+        // Pad with zeros if no normals (will use geometric normal)
+        for (size_t i = 0; i < numNewVerts * 3; ++i) {
+            m_impl->normals.push_back(0.0f);
+        }
+    }
+    
+    // Add UVs
     if (!uvData.empty() && uvData.size() >= numNewVerts * 2) {
         m_impl->hasUVs = true;
         for (size_t i = 0; i < numNewVerts; ++i) {
@@ -185,10 +228,12 @@ void Scene::addTriangleMesh(std::span<const float> verts,
         }
     }
     
+    // Add indices
     for (uint32_t idx : inds) {
         m_impl->indices.push_back(vertexOffset + idx);
     }
     
+    // Add material IDs
     uint32_t numTris = static_cast<uint32_t>(inds.size() / 3);
     for (uint32_t i = 0; i < numTris; ++i) {
         m_impl->triangleMaterialIds.push_back(materialId);
@@ -241,6 +286,67 @@ void Scene::setEnvironmentRadiance(const Vec3& radiance) {
     m_impl->environmentRadiance = radiance;
 }
 
+void Scene::setEnvironmentMap(const std::string& hdrPath) {
+    // Load HDR image using stb_image
+    int width, height, channels;
+    float* data = stbi_loadf(hdrPath.c_str(), &width, &height, &channels, 4);  // Force RGBA
+    
+    if (!data) {
+        throw std::runtime_error("Failed to load HDR environment map: " + hdrPath);
+    }
+    
+    std::cout << "[Scene] Loaded HDR environment map: " << hdrPath 
+              << " (" << width << "x" << height << ", " << channels << " channels)\n";
+    
+    // Create CUDA array
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float4>();
+    cudaArray_t d_array;
+    cudaMallocArray(&d_array, &channelDesc, width, height);
+    
+    // Copy data to CUDA array
+    cudaMemcpy2DToArray(
+        d_array,
+        0, 0,
+        data,
+        width * sizeof(float4),
+        width * sizeof(float4),
+        height,
+        cudaMemcpyHostToDevice
+    );
+    
+    stbi_image_free(data);
+    
+    // Create texture object
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = d_array;
+    
+    cudaTextureDesc texDesc = {};
+    texDesc.addressMode[0] = cudaAddressModeWrap;  // Wrap horizontally
+    texDesc.addressMode[1] = cudaAddressModeClamp; // Clamp vertically
+    texDesc.filterMode = cudaFilterModeLinear;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 1;
+    
+    cudaTextureObject_t texObj = 0;
+    cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr);
+    
+    // Clean up old environment map if exists
+    if (m_impl->envMapTexture) {
+        cudaDestroyTextureObject(m_impl->envMapTexture);
+    }
+    if (m_impl->d_envArray) {
+        cudaFreeArray(m_impl->d_envArray);
+    }
+    
+    m_impl->d_envArray = d_array;
+    m_impl->envMapTexture = texObj;
+    m_impl->envMapWidth = width;
+    m_impl->envMapHeight = height;
+    
+    std::cout << "[Scene] Environment map texture created (GPU)\n";
+}
+
 void Scene::finalize(const SceneBuildConfig& config) {
     if (m_impl->finalized) return;
     
@@ -266,6 +372,14 @@ void Scene::finalize(const SceneBuildConfig& config) {
     size_t matSize = m_impl->materials.size() * sizeof(MaterialData);
     CU_CHECK(cuMemAlloc(&m_impl->d_materials, matSize));
     CU_CHECK(cuMemcpyHtoD(m_impl->d_materials, m_impl->materials.data(), matSize));
+    
+    // Upload normals if present
+    if (m_impl->hasNormals && !m_impl->normals.empty()) {
+        size_t normalSize = m_impl->normals.size() * sizeof(float);
+        CU_CHECK(cuMemAlloc(&m_impl->d_normals, normalSize));
+        CU_CHECK(cuMemcpyHtoD(m_impl->d_normals, m_impl->normals.data(), normalSize));
+        std::cout << "[Scene] Uploaded normals: " << m_impl->normals.size() / 3 << " vertices" << std::endl;
+    }
     
     // Upload UVs if present
     if (m_impl->hasUVs && !m_impl->uvs.empty()) {
@@ -443,12 +557,17 @@ void Scene::finalize(const SceneBuildConfig& config) {
 }
 
 DevicePtr Scene::getVerticesBuffer() const { return static_cast<DevicePtr>(m_impl->d_vertices); }
+DevicePtr Scene::getNormalsBuffer() const { return static_cast<DevicePtr>(m_impl->d_normals); }
 DevicePtr Scene::getIndicesBuffer() const { return static_cast<DevicePtr>(m_impl->d_indices); }
 DevicePtr Scene::getTriangleMaterialIdsBuffer() const { return static_cast<DevicePtr>(m_impl->d_triangleMaterialIds); }
 DevicePtr Scene::getMaterialsBuffer() const { return static_cast<DevicePtr>(m_impl->d_materials); }
 TraversableHandle Scene::getGASHandle() const { return static_cast<TraversableHandle>(m_impl->gasHandle); }
 uint32_t Scene::getNumMaterials() const { return static_cast<uint32_t>(m_impl->materials.size()); }
 Vec3 Scene::getEnvironmentRadiance() const { return m_impl->environmentRadiance; }
+
+uint64_t Scene::getEnvironmentMapTexture() const { return static_cast<uint64_t>(m_impl->envMapTexture); }
+uint32_t Scene::getEnvironmentMapWidth() const { return m_impl->envMapWidth; }
+uint32_t Scene::getEnvironmentMapHeight() const { return m_impl->envMapHeight; }
 
 DevicePtr Scene::getEmissiveTrianglesBuffer() const { return static_cast<DevicePtr>(m_impl->d_emissiveTriangles); }
 DevicePtr Scene::getEmissiveTriangleCDFBuffer() const { return static_cast<DevicePtr>(m_impl->d_emissiveTriangleCDF); }

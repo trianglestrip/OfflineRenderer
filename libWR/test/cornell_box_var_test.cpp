@@ -19,16 +19,16 @@ void buildCornellBoxVar(Scene* scene) {
     uint32_t floorMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f), checkerTex);
     
     uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
-    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.75f, 0.25f, 0.25f));
-    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
-    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(15.0f, 15.0f, 15.0f));  // Reduced from 40.0f
+    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.63f, 0.065f, 0.05f));  // Saturated red
+    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.14f, 0.16f, 0.55f));  // Saturated blue
+    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(15.0f, 15.0f, 15.0f));
     uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 1.5f);
     
     // GGX materials for metal box
     uint32_t goldMat = scene->addGGXReflectionMaterial(
-        Vec3(1.0f, 0.85f, 0.3f),  // Gold albedo
-        0.15f,                     // Roughness (slightly rough)
-        1.0f                       // Metallic
+        Vec3(1.0f, 0.782f, 0.344f),  // Standard gold albedo (more accurate)
+        0.05f,                        // Roughness (mirror-like for bright highlights)
+        1.0f                          // Metallic
     );
     
     const float L = -1.5f, R = 1.5f;
@@ -161,7 +161,9 @@ int main() {
     renderParams.height = config.height;
     renderParams.spp = config.spp;
     renderParams.denoiser.enabled = config.denoiser;
-    renderParams.useNEE = true;  // Re-enable NEE with fixed PDF
+    renderParams.useNEE = true;
+    renderParams.maxBounces = 12;  // Increased for better glass/metal quality
+    renderParams.russianRouletteDepth = 5.0f;
     
     renderer->render(scene, camera, image.data(), renderParams);
     

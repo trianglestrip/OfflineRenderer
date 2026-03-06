@@ -138,14 +138,21 @@ __device__ __forceinline__ uint32_t sampleEmissiveTriangle(
 // Multiple Importance Sampling (MIS)
 // ============================================================================
 
+__device__ __forceinline__ float balanceHeuristic(float pdf1, float pdf2) {
+    return pdf1 / (pdf1 + pdf2);
+}
+
 __device__ __forceinline__ float powerHeuristic(float pdf1, float pdf2) {
     float p1 = pdf1 * pdf1;
     float p2 = pdf2 * pdf2;
     return p1 / (p1 + p2);
 }
 
-__device__ __forceinline__ float balanceHeuristic(float pdf1, float pdf2) {
-    return pdf1 / (pdf1 + pdf2);
+// Power heuristic with exponent (beta = 2 is standard)
+__device__ __forceinline__ float powerHeuristicBeta(float pdf1, float pdf2, float beta = 2.0f) {
+    float p1 = powf(pdf1, beta);
+    float p2 = powf(pdf2, beta);
+    return p1 / (p1 + p2);
 }
 
 // ============================================================================
@@ -157,7 +164,8 @@ __device__ __forceinline__ bool russianRoulette(
     uint32_t depth,
     float rrStartDepth,
     float xi,
-    float3& newThroughput
+    float3& newThroughput,
+    bool isDelta = false
 ) {
     if (depth < rrStartDepth) {
         newThroughput = throughput;
@@ -166,7 +174,15 @@ __device__ __forceinline__ bool russianRoulette(
     
     // Survival probability based on throughput luminance
     float luminance = 0.2126f * throughput.x + 0.7152f * throughput.y + 0.0722f * throughput.z;
-    float q = fmaxf(0.05f, fminf(0.95f, luminance));
+    
+    // Adaptive termination probability based on depth
+    // Deeper paths are more likely to be terminated
+    float depthFactor = 1.0f / (1.0f + 0.1f * (depth - rrStartDepth));
+    
+    // For delta materials (Glass, Mirror), use higher survival probability
+    // to avoid prematurely terminating specular paths
+    float minProb = isDelta ? 0.5f : 0.05f;
+    float q = fmaxf(minProb, fminf(0.95f, luminance * depthFactor));
     
     if (xi < q) {
         newThroughput = make_float3(throughput.x / q, throughput.y / q, throughput.z / q);
@@ -174,6 +190,23 @@ __device__ __forceinline__ bool russianRoulette(
     }
     
     return false;
+}
+
+// ============================================================================
+// Firefly Clamping
+// ============================================================================
+
+__device__ __forceinline__ float3 clampFireflies(const float3& radiance, float maxLuminance) {
+    if (maxLuminance <= 0.0f) return radiance;
+    
+    float luminance = 0.2126f * radiance.x + 0.7152f * radiance.y + 0.0722f * radiance.z;
+    
+    if (luminance > maxLuminance) {
+        float scale = maxLuminance / luminance;
+        return make_float3(radiance.x * scale, radiance.y * scale, radiance.z * scale);
+    }
+    
+    return radiance;
 }
 
 } // namespace internal

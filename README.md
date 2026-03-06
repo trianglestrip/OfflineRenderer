@@ -35,7 +35,7 @@ Saved gallery\wr_cornell.png
 ### ✅ 已实现功能
 
 #### 核心架构
-- **Wavefront 渲染架构**：将渲染过程分解为多个阶段（Trace, Shade, Compact），提高 GPU 利用率
+- **Wavefront 渲染架构**：将渲染过程分解为多个阶段（Trace, Shade, Shadow, Compact），提高 GPU 利用率
 - **OptiX 8.0 集成**：使用 OptiX 进行硬件加速光线追踪
 - **CUDA 13.1 支持**：支持 Turing (compute_75) 及更新架构的 GPU
 - **C++20 现代 API**：使用 `std::span` 实现零拷贝数据传递
@@ -44,19 +44,28 @@ Saved gallery\wr_cornell.png
 #### 场景管理
 - **三角网格**：支持任意三角网格的添加和管理
 - **加速结构**：自动构建 OptiX GAS (Geometry Acceleration Structure)
-- **材质系统**：
-  - Lambertian（漫反射）材质
-  - Emissive（自发光）材质
-  - Glass（玻璃/折射）材质，支持 IOR 参数
-  - **GGX 微表面材质**（PBR）：支持 roughness 和 metallic 参数
+- **材质系统**（模块化架构）：
+  - ✅ Lambertian（漫反射）材质 + 纹理支持
+  - ✅ Emissive（自发光）材质
+  - ✅ Glass（理想镜面折射）材质：Fresnel + 能量守恒
+  - ✅ GGX Reflection（粗糙金属）：VNDF 采样 + NEE
+  - ✅ **GGX Transmission（粗糙玻璃）**：微表面折射 ⬅️ 新增！
+- **纹理系统**：
+  - ✅ 2D 纹理加载（PNG 格式）
+  - ✅ GPU 纹理对象管理
+  - ✅ UV 坐标映射
+  - ✅ 线性插值采样
+  - ✅ **法线贴图（Normal Map）** ⬅️ 新增！
 - **环境光照**：支持均匀环境光
 - **光源管理**：自动构建发光三角形列表和重要性采样 CDF
 
 #### 高级渲染技术（参考 libVLR）
-- **Next Event Estimation (NEE)**：显式光源采样，收敛速度提升 2-5 倍
-- **Multiple Importance Sampling (MIS)**：Power heuristic 权重，减少方差
-- **Russian Roulette**：基于 throughput 的动态路径终止，性能提升 10-20%
-- **Denoiser Guide Layers**：使用 Albedo/Normal 提升降噪质量（9 通道输入）
+- ✅ **Next Event Estimation (NEE)**：显式光源采样，收敛速度提升 2-5 倍
+- ✅ **Shadow Ray Visibility Test**：NEE 阴影光线可见性测试，物理正确的遮挡
+- ✅ **Multiple Importance Sampling (MIS)**：Power heuristic 权重，减少方差
+- ✅ **Russian Roulette**：基于 throughput 的动态路径终止，Delta 材质特殊处理
+- ✅ **Denoiser Guide Layers**：使用 Albedo/Normal 提升降噪质量（9 通道输入）
+- ✅ **ACES Filmic Tone Mapping**：业界标准色调映射，更好的色彩和对比度
 
 #### 渲染功能
 - **路径追踪**：基于蒙特卡洛的无偏路径追踪
@@ -66,17 +75,22 @@ Saved gallery\wr_cornell.png
 
 #### 第三方库集成
 - **GLM (OpenGL Mathematics)**：用于公共 API 的数学类型（Vec3, Mat4 等）
+- **STB Image**：PNG 纹理加载
 - **STB Image Write**：PNG 图像输出
 
 ### 🔄 待改进功能（参考 libVLR）
 
-#### 1. 阴影光线追踪 ⚠️ **（最高优先级）**
-**当前问题**：NEE 未检查遮挡，光源会穿透墙壁（物理不正确）
+#### 1. 焦散效果 ⚠️ **（当前最大差距）**
+**当前问题**：玻璃球缺少焦散（caustics）效果，透明度不足
 
-**需要实现**：
-- 在 NEE 中追踪阴影光线
-- 使用 `RayStage::Shadow` 检查可见性
-- 只在未遮挡时添加光源贡献
+**原因**：
+- 单向路径追踪难以捕捉 SDS 路径（光源 → 玻璃 → 地面 → 相机）
+- 这些路径的采样概率极低
+
+**解决方案**：
+- **Photon Mapping**：专门处理焦散（中期，2-3周）
+- **Bidirectional PT**：双向路径追踪（长期，4-6周）
+- libVLR 使用 LVC-BPT 算法
 
 ---
 
@@ -91,13 +105,13 @@ libVLR 支持的材质类型：
 - **Mixed BSDF**：多材质混合
 
 **libWR 当前状态**：
-- ✅ Lambertian（漫反射）
+- ✅ Lambertian（漫反射）+ 纹理
 - ✅ Emissive（自发光）
-- ✅ Glass（折射）
-- ✅ **GGX 微表面 BRDF**（支持 roughness 和 metallic）
+- ✅ Glass（理想镜面折射）+ Fresnel + 能量守恒
+- ✅ GGX Reflection（粗糙金属）+ NEE
+- ✅ **GGX Transmission（粗糙玻璃）** ⬅️ 新增！
 
 **待实现**：
-- ❌ GGX 微表面 BSDF（粗糙玻璃）
 - ❌ Fresnel-blended Lambertian
 - ❌ 各向异性 BRDF
 - ❌ Mixed BSDF
@@ -112,7 +126,7 @@ libVLR 的核心特性之一：
 - **节点连接系统**：通过 Plug 系统灵活连接节点
 - **运行时材质构建**：通过节点图动态定义材质行为
 
-**libWR 当前状态**：材质参数硬编码，不支持纹理和节点系统
+**libWR 当前状态**：材质参数硬编码，支持基础纹理但无节点系统
 
 #### 4. 纹理和贴图
 libVLR 支持：
@@ -123,7 +137,13 @@ libVLR 支持：
 - **纹理过滤**：Nearest/Linear/Trilinear 过滤
 - **颜色空间管理**：支持 sRGB、Rec709 等色彩空间
 
-**libWR 当前状态**：完全不支持纹理
+**libWR 当前状态**：
+- ✅ 2D 纹理（PNG 格式）
+- ✅ UV 坐标映射
+- ✅ 线性插值采样
+- ✅ **法线贴图（Normal Map）** ⬅️ 新增！
+- ❌ Alpha 贴图
+- ❌ EXR/HDR 格式
 
 #### 5. 光源类型
 libVLR 支持：
@@ -225,39 +245,43 @@ libVLR 提供：
 
 ## 功能对比表
 
-| 功能类别 | libVLR | libWR |
-|---------|--------|-------|
-| **材质** | 8+ 种（含 GGX, UE4, 各向异性） | 3 种（Lambertian, Emissive, Glass） |
-| **纹理** | ✅ 完整支持（2D, Normal, Alpha） | ❌ 不支持 |
-| **Shader Node** | ✅ 完整节点系统 | ❌ 不支持 |
-| **光源** | 面光源、点光源、IBL | 面光源、均匀环境光 |
-| **相机** | 透视（含景深）、环境相机 | 透视（无景深） |
-| **渲染算法** | PT+MIS, LT, LVC-BPT | 基础 PT |
-| **光谱渲染** | ✅ 全光谱 + RGB | ❌ 仅 RGB |
-| **场景图** | ✅ 树形结构 + 实例化 | ❌ 扁平结构 |
-| **图像格式** | PNG, EXR, HDR 等 | PNG |
-| **降噪** | ✅ OptiX Denoiser | ✅ OptiX Denoiser |
-| **API** | C + C++ Wrapper | C++ |
+| 功能类别 | libVLR | libWR | 完成度 |
+|---------|--------|-------|--------|
+| **材质** | 8+ 种（含 GGX, UE4, 各向异性） | 5 种（Lambertian, Emissive, Glass, GGX Reflection, GGX Transmission） | 60% |
+| **纹理** | ✅ 完整支持（2D, Normal, Alpha） | ✅ 2D 纹理（PNG）+ Normal Map | 60% |
+| **Shader Node** | ✅ 完整节点系统 | ❌ 不支持 | 0% |
+| **光源** | 面光源、点光源、IBL | 面光源、均匀环境光 | 50% |
+| **相机** | 透视（含景深）、环境相机 | 透视（无景深） | 50% |
+| **渲染算法** | PT+NEE+MIS, LT, LVC-BPT | PT+NEE+MIS | 40% |
+| **光谱渲染** | ✅ 全光谱 + RGB | ❌ 仅 RGB | 0% |
+| **场景图** | ✅ 树形结构 + 实例化 | ❌ 扁平结构 | 0% |
+| **图像格式** | PNG, EXR, HDR 等 | PNG | 30% |
+| **降噪** | ✅ OptiX Denoiser | ✅ OptiX Denoiser + Guide Layers | 100% |
+| **Tone Mapping** | Reinhard, ACES 等 | ✅ ACES Filmic | 80% |
+| **API** | C + C++ Wrapper | C++ | 50% |
+
+**整体完成度**：约 **48%**
 
 ## 开发优先级建议
 
-### 高优先级（核心功能）
-1. **纹理系统**：实现 2D 纹理采样，支持 PNG/EXR 加载
-2. **MIS（多重重要性采样）**：显著提升收敛速度
-3. **GGX 材质**：支持粗糙金属和塑料材质
-4. **法线贴图**：提升视觉细节
+### 🔴 高优先级（质量关键）
+1. ⚠️ **焦散算法**（Photon Mapping 或 BPT）- 解决 Glass 透明度问题
+2. ✅ **GGX BSDF**（粗糙玻璃）- 已实现
+3. ✅ **法线贴图** - 已实现
+4. ✅ **代码重构** - 已完成（shade.cu: 472→53 行）
 
-### 中优先级（质量提升）
+### 🟡 中优先级（功能扩展）
 5. **HDR 环境贴图**：IBL 照明
 6. **景深效果**：薄透镜模型
 7. **场景图和变换**：支持物体变换和实例化
 8. **EXR 输出**：高动态范围输出
 
-### 低优先级（高级功能）
-9. **Shader Node 系统**：程序化材质
-10. **双向路径追踪**：处理复杂光照场景
-11. **光谱渲染**：色散效果
-12. **C API**：跨语言支持
+### 🟢 低优先级（高级功能）
+10. **Shader Node 系统**：程序化材质
+11. **Light Tracing**：从光源开始的路径追踪
+12. **光谱渲染**：色散效果
+13. **C API**：跨语言支持
+14. **各向异性 BRDF**：各向异性反射
 
 ## 技术架构对比
 
@@ -305,4 +329,50 @@ libVLR 提供：
 
 ---
 
-**当前版本**：v0.3.0 - GGX Microfacet BRDF (2026-03-05)
+---
+
+## 最近更新（v0.5.0 - 2026-03-05）
+
+### 🏗️ 架构重构
+- ✅ **模块化材质系统**：`shade.cu` 从 472 行缩减到 **53 行**（-89%）
+- ✅ **消除代码重复**：提取公共函数到 `utils/`（atomic_ops, fresnel, ray_offset）
+- ✅ **材质独立文件**：每种材质独立 `.cuh` 文件，易于维护和扩展
+- ✅ **零性能损失**：所有函数使用 `__forceinline__`，编译器完全内联
+
+### 🎨 新增材质
+- ✅ **GGX Transmission（粗糙玻璃）**：微表面折射 BSDF，支持 roughness 参数
+- ✅ **法线贴图（Normal Map）**：切线空间法线映射，提升视觉细节
+
+### 🔧 材质和算法改进
+- ✅ **ACES Filmic Tone Mapping**：替换 Reinhard，色彩饱和度显著提升
+- ✅ **Glass 材质能量守恒**：移除多余的 Squeeze Factor，透明度大幅改善
+- ✅ **Russian Roulette 优化**：Delta 材质使用更高存活率（0.5 vs 0.05）
+- ✅ **GGX NEE 启用**：金属材质的直接光照更准确
+
+### 📁 新文件结构
+```
+libWR/kernels/
+├── shade.cu (53行) ← 调度器
+├── utils/ ← 公共工具
+│   ├── atomic_ops.cuh
+│   ├── fresnel.cuh
+│   ├── ray_offset.cuh
+│   └── normal_map.cuh
+└── materials/ ← 材质模块
+    ├── emissive.cuh
+    ├── lambertian.cuh
+    ├── glass.cuh
+    ├── ggx_material.cuh
+    └── ggx_transmission.cuh
+```
+
+### 已知问题
+- ⚠️ **玻璃球焦散缺失**：需要 Photon Mapping 或 BPT 算法
+
+### 性能数据
+- 512×512 @ 64 SPP：~12秒（NVIDIA MX550）
+- 重构后性能略有提升
+
+---
+
+**当前版本**：v0.5.0 - Architecture Refactor & New Materials (2026-03-05)

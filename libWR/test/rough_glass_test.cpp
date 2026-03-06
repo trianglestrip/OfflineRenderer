@@ -72,34 +72,34 @@ void buildRoughGlassScene(Scene* scene) {
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
     }
     
-    // Four glass spheres with different roughness
+    // Four glass spheres with different roughness (with smooth normals)
     // Ideal glass (left-back)
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        test_helpers::createSphere(verts, inds, -0.6f, 0.35f, -0.4f, 0.35f, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), idealGlass);
+        test_helpers::createSphere(verts, norms, inds, -0.6f, 0.35f, -0.4f, 0.35f, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), idealGlass);
     }
     // Slightly rough (right-back)
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        test_helpers::createSphere(verts, inds, 0.6f, 0.35f, -0.4f, 0.35f, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass1);
+        test_helpers::createSphere(verts, norms, inds, 0.6f, 0.35f, -0.4f, 0.35f, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass1);
     }
     // Medium rough (left-front)
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        test_helpers::createSphere(verts, inds, -0.6f, 0.35f, 0.4f, 0.35f, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass2);
+        test_helpers::createSphere(verts, norms, inds, -0.6f, 0.35f, 0.4f, 0.35f, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass2);
     }
     // Very rough (right-front)
     {
-        std::vector<float> verts;
+        std::vector<float> verts, norms;
         std::vector<uint32_t> inds;
-        test_helpers::createSphere(verts, inds, 0.6f, 0.35f, 0.4f, 0.35f, 48, 32);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), roughGlass3);
+        test_helpers::createSphere(verts, norms, inds, 0.6f, 0.35f, 0.4f, 0.35f, 48, 32);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), std::span(norms), std::span<const float>(), roughGlass3);
     }
     
     std::cout << "[Test] Rough glass scene built (4 spheres: roughness 0.0, 0.05, 0.15, 0.3)\n";

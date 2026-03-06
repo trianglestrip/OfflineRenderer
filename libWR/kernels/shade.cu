@@ -64,8 +64,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
             shadeGGXTransmission(ray, effectiveHit, mat, p);
             break;
         default:
-            atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
-            ray.stage = RayStage::Terminated;
+            terminateRay(ray, p);
             break;
     }
 }

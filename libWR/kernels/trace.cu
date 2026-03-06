@@ -4,6 +4,7 @@
 #include "vector_math.cuh"
 #include "sampling.cuh"
 #include "materials.cuh"
+#include "utils/atomic_ops.cuh"
 
 using namespace wr::internal;
 
@@ -11,18 +12,6 @@ static constexpr float kPi = 3.14159265f;
 
 extern "C" {
     __constant__ const LaunchParams* params;
-}
-
-// Atomic add for float3
-__device__ inline void atomicAddFloat3(float3* address, float3 value) {
-    atomicAdd(&address->x, value.x);
-    atomicAdd(&address->y, value.y);
-    atomicAdd(&address->z, value.z);
-}
-
-__device__ inline float randf(uint32_t& seed) {
-    seed = seed * 1664525u + 1013904223u;
-    return (float)(seed >> 8) / 16777216.0f;
 }
 
 extern "C" __global__ void __raygen__trace() {
@@ -81,13 +70,45 @@ extern "C" __global__ void __raygen__trace() {
             float3 camRight = make_float3(params->camera.right.x, params->camera.right.y, params->camera.right.z);
             float3 camUp = make_float3(params->camera.up.x, params->camera.up.y, params->camera.up.z);
             
+            // Compute ray direction (pinhole)
             float3 rayDir = camForward + 
                            camRight * ndcX * params->camera.tanHalfFovY +
                            camUp * ndcY * params->camera.tanHalfFovY;
             rayDir = normalize(rayDir);
             
-            ray.origin = camPos;
-            ray.direction = rayDir;
+            // Apply Depth of Field (Thin Lens Model)
+            if (params->camera.lensRadius > 0.0f && params->camera.focalDistance > 0.0f) {
+                // Sample point on lens (uniform disk sampling)
+                float r3 = randf(jitterSeed);
+                float r4 = randf(jitterSeed);
+                float theta = 2.0f * 3.14159265f * r3;
+                float radius = sqrtf(r4) * params->camera.lensRadius;
+                
+                float3 lensOffset = make_float3(
+                    camRight.x * radius * cosf(theta) + camUp.x * radius * sinf(theta),
+                    camRight.y * radius * cosf(theta) + camUp.y * radius * sinf(theta),
+                    camRight.z * radius * cosf(theta) + camUp.z * radius * sinf(theta)
+                );
+                
+                // Focal point (on focal plane)
+                float3 focalPoint = make_float3(
+                    camPos.x + rayDir.x * params->camera.focalDistance,
+                    camPos.y + rayDir.y * params->camera.focalDistance,
+                    camPos.z + rayDir.z * params->camera.focalDistance
+                );
+                
+                // New ray from lens sample to focal point
+                ray.origin = make_float3(camPos.x + lensOffset.x, camPos.y + lensOffset.y, camPos.z + lensOffset.z);
+                ray.direction = normalize(make_float3(
+                    focalPoint.x - ray.origin.x,
+                    focalPoint.y - ray.origin.y,
+                    focalPoint.z - ray.origin.z
+                ));
+            } else {
+                // Pinhole camera (no DOF)
+                ray.origin = camPos;
+                ray.direction = rayDir;
+            }
             ray.throughput = make_float3(1.0f, 1.0f, 1.0f);
             ray.radiance = make_float3(0.0f, 0.0f, 0.0f);
             ray.pixelIndex = rayIndex;
@@ -122,7 +143,8 @@ extern "C" __global__ void __raygen__trace() {
         if (hitFlag == 0) {
             float3 envRad = make_float3(params->environmentRadiance.x, params->environmentRadiance.y, params->environmentRadiance.z);
             ray.radiance = ray.radiance + ray.throughput * envRad;
-            atomicAddFloat3(&params->accumBuffer[ray.pixelIndex], ray.radiance);
+            float3 clamped = clampFireflies(ray.radiance, params->fireflyClamp);
+            atomicAddFloat3(&params->accumBuffer[ray.pixelIndex], clamped);
             ray.stage = RayStage::Terminated;
         } else {
             ray.stage = RayStage::Shade;
@@ -172,16 +194,8 @@ extern "C" __global__ void __closesthit__trace() {
     float3 e1 = v1 - v0;
     float3 e2 = v2 - v0;
     float3 geometricNormal = normalize(cross(e1, e2));
-    // Flip normal to face the ray (if ray and normal are in the same direction, flip)
-    float3 normal = dot(geometricNormal, direction) > 0.0f ? -geometricNormal : geometricNormal;
     
-    HitInfo& hit = params->hitBuffer[rayIndex];
-    hit.position = hitPos;
-    hit.normal = normal;
-    hit.materialId = params->geometry.triangleMaterialIds[primIdx];
-    hit.primIndex = primIdx;
-    
-    // Interpolate UV from barycentrics
+    // Interpolate barycentric coordinates
     float3 v0p = hitPos - v0;
     float d00 = dot(e1, e1);
     float d01 = dot(e1, e2);
@@ -192,6 +206,52 @@ extern "C" __global__ void __closesthit__trace() {
     float v_bary = (d11 * d20 - d01 * d21) / fmaxf(denom, 1e-8f);
     float w_bary = (d00 * d21 - d01 * d20) / fmaxf(denom, 1e-8f);
     float u_bary = 1.0f - v_bary - w_bary;
+    
+    // Interpolate shading normal from vertex normals (if provided)
+    float3 shadingNormal = geometricNormal;
+    if (params->geometry.normals) {
+        float3 n0 = make_float3(
+            params->geometry.normals[i0 * 3 + 0],
+            params->geometry.normals[i0 * 3 + 1],
+            params->geometry.normals[i0 * 3 + 2]
+        );
+        float3 n1 = make_float3(
+            params->geometry.normals[i1 * 3 + 0],
+            params->geometry.normals[i1 * 3 + 1],
+            params->geometry.normals[i1 * 3 + 2]
+        );
+        float3 n2 = make_float3(
+            params->geometry.normals[i2 * 3 + 0],
+            params->geometry.normals[i2 * 3 + 1],
+            params->geometry.normals[i2 * 3 + 2]
+        );
+        
+        // Check if normals are valid (non-zero)
+        float n0_len = length(n0);
+        float n1_len = length(n1);
+        float n2_len = length(n2);
+        
+        if (n0_len > 1e-6f && n1_len > 1e-6f && n2_len > 1e-6f) {
+            // Interpolate and normalize
+            shadingNormal = normalize(u_bary * n0 + v_bary * n1 + w_bary * n2);
+            
+            // Ensure shading normal is on the same hemisphere as geometric normal
+            if (dot(shadingNormal, geometricNormal) < 0.0f) {
+                shadingNormal = -shadingNormal;
+            }
+        }
+    }
+    
+    // Flip normals to face the ray (OptiX convention)
+    float3 normal = dot(geometricNormal, direction) > 0.0f ? -geometricNormal : geometricNormal;
+    float3 shadingNormalFlipped = dot(shadingNormal, direction) > 0.0f ? -shadingNormal : shadingNormal;
+    
+    HitInfo& hit = params->hitBuffer[rayIndex];
+    hit.position = hitPos;
+    hit.normal = shadingNormalFlipped;
+    hit.geometricNormal = normal;
+    hit.materialId = params->geometry.triangleMaterialIds[primIdx];
+    hit.primIndex = primIdx;
     
     if (params->geometry.uvs) {
         float uv0_u = params->geometry.uvs[i0 * 2 + 0], uv0_v = params->geometry.uvs[i0 * 2 + 1];

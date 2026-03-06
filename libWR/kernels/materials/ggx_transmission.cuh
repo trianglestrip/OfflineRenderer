@@ -84,6 +84,14 @@ __device__ __forceinline__ void shadeGGXTransmission(
                 ray.throughput.y * albedo.y,
                 ray.throughput.z * albedo.z
             );
+            
+            // Asymmetric scattering correction for refraction
+            float correction = asymmetricScatteringCorrection(refracted, hit.normal, hit.geometricNormal);
+            ray.throughput = make_float3(
+                ray.throughput.x * correction,
+                ray.throughput.y * correction,
+                ray.throughput.z * correction
+            );
         }
     }
     

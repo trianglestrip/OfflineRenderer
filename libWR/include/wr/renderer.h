@@ -32,6 +32,7 @@ struct RenderParams {
     bool useNEE = true;                  // Next Event Estimation
     uint32_t maxBounces = 8;
     float russianRouletteDepth = 3.0f;
+    float fireflyClamp = 0.0f;           // Max luminance per sample (0 = disabled)
 };
 
 // Forward declaration

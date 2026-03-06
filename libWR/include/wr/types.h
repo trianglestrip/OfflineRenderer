@@ -20,6 +20,10 @@ struct Camera {
     float fovY{glm::radians(45.0f)};
     float aspect{1.0f};
     
+    // Depth of Field (Thin Lens Model)
+    float focalDistance{0.0f};  // 0 = infinite focus (no DOF)
+    float lensRadius{0.0f};     // 0 = pinhole camera (no DOF)
+    
     // Helper: Get view matrix
     Mat4 getViewMatrix() const {
         return glm::lookAt(position, target, up);

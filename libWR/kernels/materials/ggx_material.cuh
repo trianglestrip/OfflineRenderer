@@ -116,8 +116,7 @@ __device__ __forceinline__ void shadeGGX(
     // Check if sampling failed
     float cosTheta = dot(hit.normal, wi);
     if (bsdfPdf < 1e-5f || cosTheta <= 0.0f) {
-        atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
-        ray.stage = RayStage::Terminated;
+        terminateRay(ray, p);
         return;
     }
     
@@ -130,8 +129,7 @@ __device__ __forceinline__ void shadeGGX(
     // Check for NaN or Inf
     if (isnan(brdf.x) || isnan(brdf.y) || isnan(brdf.z) ||
         isinf(brdf.x) || isinf(brdf.y) || isinf(brdf.z)) {
-        atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
-        ray.stage = RayStage::Terminated;
+        terminateRay(ray, p);
         return;
     }
     

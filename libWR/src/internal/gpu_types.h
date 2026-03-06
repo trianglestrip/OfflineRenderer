@@ -78,8 +78,9 @@ struct RayState {
 // Hit information (GPU)
 struct HitInfo {
     float3 position;
-    float3 normal;
-    float2 uv;           // Interpolated UV coordinates
+    float3 normal;           // Shading normal (interpolated from vertices or geometric)
+    float3 geometricNormal;  // True geometric normal (for offset and consistency)
+    float2 uv;               // Interpolated UV coordinates
     uint32_t materialId;
     uint32_t primIndex;
 };
@@ -98,10 +99,11 @@ struct CameraData {
 
 // Geometry buffers
 struct GeometryBuffers {
-    const float* vertices;
-    const uint32_t* indices;
+    const float* vertices;          // 3 floats per vertex (x, y, z)
+    const float* normals;            // 3 floats per vertex (nx, ny, nz), null if no normals
+    const uint32_t* indices;         // 3 indices per triangle
     const uint32_t* triangleMaterialIds;
-    const float* uvs;    // 2 floats per vertex, null if no UVs
+    const float* uvs;                // 2 floats per vertex, null if no UVs
 };
 
 // Launch parameters for OptiX
@@ -143,7 +145,7 @@ struct LaunchParams {
     uint32_t useNEE;           // Changed from bool for alignment
     uint32_t maxBounces;
     float rrStartDepth;
-    float _padding;            // Align to 16 bytes
+    float fireflyClamp;        // Max luminance per sample (0 = disabled)
     
     // HDR Environment Map (for IBL) - 8-byte aligned
     cudaTextureObject_t envMap;  // 0 = use uniform environmentRadiance (8 bytes)

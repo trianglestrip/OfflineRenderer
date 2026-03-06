@@ -12,8 +12,7 @@ __device__ __forceinline__ void shadeEmissive(
     const MaterialData& mat,
     const LaunchParams* p
 ) {
-    atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
-    ray.stage = RayStage::Terminated;
+    terminateRay(ray, p);
 }
 
 } // namespace internal

@@ -44,6 +44,9 @@ public:
     uint32_t addGlassMaterial(const Vec3& albedo, float ior);
     uint32_t addGGXReflectionMaterial(const Vec3& albedo, float roughness, float metallic = 0.0f);
     uint32_t addGGXTransmissionMaterial(const Vec3& albedo, float roughness, float ior);
+    
+    // Material property setters
+    void setMaterialNormalMap(uint32_t materialId, uint32_t normalTextureId);
 
     // Geometry
     void addTriangleMesh(std::span<const float> vertices,
@@ -53,21 +56,33 @@ public:
                          std::span<const uint32_t> indices,
                          std::span<const float> uvs,
                          uint32_t materialId);
+    void addTriangleMesh(std::span<const float> vertices,
+                         std::span<const uint32_t> indices,
+                         std::span<const float> normals,
+                         std::span<const float> uvs,
+                         uint32_t materialId);
 
     // Environment
     void setEnvironmentRadiance(const Vec3& radiance);
+    void setEnvironmentMap(const std::string& hdrPath);  // Load HDR/EXR environment map
     
     // Finalize scene (build acceleration structure)
     void finalize(const SceneBuildConfig& config = {});
     
     // Internal accessors (used by Renderer)
     DevicePtr getVerticesBuffer() const;
+    DevicePtr getNormalsBuffer() const;
     DevicePtr getIndicesBuffer() const;
     DevicePtr getTriangleMaterialIdsBuffer() const;
     DevicePtr getMaterialsBuffer() const;
     TraversableHandle getGASHandle() const;
     uint32_t getNumMaterials() const;
     Vec3 getEnvironmentRadiance() const;
+    
+    // Environment map accessors
+    uint64_t getEnvironmentMapTexture() const;  // cudaTextureObject_t (0 if none)
+    uint32_t getEnvironmentMapWidth() const;
+    uint32_t getEnvironmentMapHeight() const;
     
     // Light sampling accessors
     DevicePtr getEmissiveTrianglesBuffer() const;
