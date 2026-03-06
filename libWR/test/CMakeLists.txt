@@ -42,3 +42,4 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
 endfunction()
 
 add_wr_test(wr_cornell_box_var_test cornell_box_var_test.cpp)
+add_wr_test(wr_simple_plane_test simple_plane_test.cpp)

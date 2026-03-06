@@ -67,6 +67,9 @@ struct RayState {
     // For shadow rays (NEE visibility test)
     float3 shadowContribution;  // Pending contribution from NEE
     float shadowRayLength;      // Distance to light source
+    
+    // RNG dimension counter (to avoid screen-space correlation)
+    uint32_t rngDimension;
 };
 
 // Hit information (GPU)

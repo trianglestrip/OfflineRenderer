@@ -20,9 +20,21 @@ __device__ __forceinline__ uint32_t pcg_hash(uint32_t seed) {
     return (word >> 22u) ^ word;
 }
 
+// PCG hash with dimension parameter for decorrelated sampling
+__device__ __forceinline__ uint32_t pcg_hash(uint32_t seed, uint32_t dimension) {
+    uint32_t state = seed * 747796405u + 2891336453u + dimension * 1013904223u;
+    uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
 __device__ __forceinline__ float rnd(uint32_t& seed) {
     seed = pcg_hash(seed);
     return float(seed) / 4294967296.0f;
+}
+
+// Generate decorrelated random number for specific dimension
+__device__ __forceinline__ float rnd_dim(uint32_t seed, uint32_t dimension) {
+    return float(pcg_hash(seed, dimension)) / 4294967296.0f;
 }
 
 // ============================================================================

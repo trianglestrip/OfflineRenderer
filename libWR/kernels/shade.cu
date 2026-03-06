@@ -63,8 +63,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
     if (mat.type == MaterialType::Lambertian) {
         // Next Event Estimation (NEE) - Direct light sampling
         if (p->useNEE && p->numEmissiveTriangles > 0) {
-            // Sample a light source
-            float lightU = rnd(ray.seed);
+            // Sample a light source (use decorrelated RNG)
+            float lightU = rnd_dim(ray.seed, ray.rngDimension++);
             uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
             uint32_t triIdx = p->emissiveTriangles[lightIdx];
             
@@ -89,10 +89,14 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 p->geometry.vertices[i2 * 3 + 2]
             );
             
-            // Sample point on light
+            // Sample point on light (use decorrelated RNG)
             float3 lightNormal;
             float lightArea;
-            float3 lightPos = sampleTriangle(rnd(ray.seed), rnd(ray.seed), v0, v1, v2, lightNormal, lightArea);
+            float3 lightPos = sampleTriangle(
+                rnd_dim(ray.seed, ray.rngDimension++), 
+                rnd_dim(ray.seed, ray.rngDimension++), 
+                v0, v1, v2, lightNormal, lightArea
+            );
             
             // Direction to light
             float3 toLight = make_float3(
@@ -156,7 +160,11 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         createCoordinateFrame(hit.normal, tangent, bitangent);
         
         float bsdfPdf;
-        float3 localDir = sampleCosineHemisphere(rnd(ray.seed), rnd(ray.seed), bsdfPdf);
+        float3 localDir = sampleCosineHemisphere(
+            rnd_dim(ray.seed, ray.rngDimension++), 
+            rnd_dim(ray.seed, ray.rngDimension++), 
+            bsdfPdf
+        );
         float3 worldDir = toWorld(localDir, hit.normal, tangent, bitangent);
         
         // Update throughput with BSDF: albedo / pi * cos(theta) / pdf
@@ -170,7 +178,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // Russian Roulette
         float3 newThroughput;
-        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd_dim(ray.seed, ray.rngDimension++), newThroughput)) {
             atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;
@@ -214,7 +222,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         float F = fresnel(cosI, etaI, etaT);
         
-        float r = randf(ray.seed);
+        float r = rnd_dim(ray.seed, ray.rngDimension++);
         bool isReflection = false;
         if (r < F) {
             float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
@@ -240,7 +248,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // Russian Roulette
         float3 newThroughput;
-        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd_dim(ray.seed, ray.rngDimension++), newThroughput)) {
             atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;
@@ -271,7 +279,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // NEE for GGX (temporarily disabled for debugging)
         if (false && p->useNEE && p->numEmissiveTriangles > 0) {
-            float lightU = rnd(ray.seed);
+            float lightU = rnd_dim(ray.seed, ray.rngDimension++);
             uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
             uint32_t triIdx = p->emissiveTriangles[lightIdx];
             
@@ -297,7 +305,11 @@ extern "C" __global__ void shade(const LaunchParams* p) {
             
             float3 lightNormal;
             float lightArea;
-            float3 lightPos = sampleTriangle(rnd(ray.seed), rnd(ray.seed), v0, v1, v2, lightNormal, lightArea);
+            float3 lightPos = sampleTriangle(
+                rnd_dim(ray.seed, ray.rngDimension++), 
+                rnd_dim(ray.seed, ray.rngDimension++), 
+                v0, v1, v2, lightNormal, lightArea
+            );
             
             float3 toLight = make_float3(
                 lightPos.x - hit.position.x,
@@ -352,7 +364,12 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         float3 wi;
         float bsdfPdf;
-        sampleGGXReflection(wo, hit.normal, tangent, bitangent, mat.roughness, rnd(ray.seed), rnd(ray.seed), wi, bsdfPdf);
+        sampleGGXReflection(
+            wo, hit.normal, tangent, bitangent, mat.roughness, 
+            rnd_dim(ray.seed, ray.rngDimension++), 
+            rnd_dim(ray.seed, ray.rngDimension++), 
+            wi, bsdfPdf
+        );
         
         // Check if sampling failed
         float cosTheta = dot(hit.normal, wi);
@@ -390,7 +407,7 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // Russian Roulette
         float3 newThroughput;
-        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd(ray.seed), newThroughput)) {
+        if (!russianRoulette(ray.throughput, ray.depth, p->rrStartDepth, rnd_dim(ray.seed, ray.rngDimension++), newThroughput)) {
             atomicAddFloat3(&p->accumBuffer[ray.pixelIndex], ray.radiance);
             ray.stage = RayStage::Terminated;
             return;

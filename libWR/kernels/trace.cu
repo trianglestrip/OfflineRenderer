@@ -71,6 +71,7 @@ extern "C" __global__ void __raygen__trace() {
             ray.isFirstHit = true;
             ray.prevPdf = 1.0f;
             ray.prevWasDelta = true;  // Camera ray is delta
+            ray.rngDimension = 0;  // Reset RNG dimension counter
         }
         
         uint32_t hitFlag = 0;
