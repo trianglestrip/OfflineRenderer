@@ -77,59 +77,12 @@ void buildCornellBoxVar(Scene* scene) {
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     
-    // Gold metal box on the left
+    // Gold metal sphere on the left (using sphere to test if material works)
     {
-        float boxSize = 0.6f;
-        float boxY = 0.0f;
-        float boxX = -0.5f;  // Position on the left
-        float boxZ = -0.3f;  // Slightly forward
-        float verts[] = {
-            // Front face
-            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            // Back face
-            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            // Left face
-            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            // Right face
-            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            // Top face
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
-            // Bottom face
-            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
-            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
-            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f
-        };
-        uint32_t inds[] = {
-            // Front face
-            0, 1, 2, 0, 2, 3,
-            // Back face
-            4, 5, 6, 4, 6, 7,
-            // Left face
-            8, 9, 10, 8, 10, 11,
-            // Right face
-            12, 13, 14, 12, 14, 15,
-            // Top face
-            16, 17, 18, 16, 18, 19,
-            // Bottom face
-            20, 21, 22, 20, 22, 23
-        };
-        scene->addTriangleMesh(std::span(verts, 72), std::span(inds, 36), goldMat);  // Gold metal box
+        std::vector<float> verts;
+        std::vector<uint32_t> inds;
+        createSphere(verts, inds, 0.5f, -0.4f, 0.5f, 0.6f, 32, 24);  // Gold sphere
+        scene->addTriangleMesh(std::span(verts), std::span(inds), goldMat);
     }
     
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;
