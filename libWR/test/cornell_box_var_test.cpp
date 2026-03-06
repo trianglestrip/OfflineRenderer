@@ -21,9 +21,12 @@ void buildCornellBoxVar(Scene* scene) {
     uint32_t lightMat = scene->addEmissiveMaterial(Vec3(40.0f, 40.0f, 40.0f));
     uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 1.5f);
     
-    // Temporarily use Lambertian for debugging
-    uint32_t roughMetalMat = scene->addLambertianMaterial(Vec3(1.0f, 0.85f, 0.3f));  // Gold color
-    uint32_t smoothMetalMat = scene->addLambertianMaterial(Vec3(0.95f, 0.95f, 0.95f));  // Silver color
+    // GGX materials for metal box
+    uint32_t goldMat = scene->addGGXReflectionMaterial(
+        Vec3(1.0f, 0.85f, 0.3f),  // Gold albedo
+        0.15f,                     // Roughness (slightly rough)
+        1.0f                       // Metallic
+    );
     
     const float L = -1.5f, R = 1.5f;
     const float B = 0.0f, T = 3.0f;
@@ -62,57 +65,51 @@ void buildCornellBoxVar(Scene* scene) {
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
     }
-    // Temporarily remove spheres for debugging
-    /*
+    // Glass sphere on the right
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, -0.7f, 0.5f, -0.7f, 0.5f, 32, 24);
+        createSphere(verts, inds, 0.6f, 0.5f, 0.0f, 0.5f, 64, 48);  // Higher resolution for glass
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
-    {
-        std::vector<float> verts;
-        std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.7f, 0.5f, 0.7f, 0.4f, 32, 24);
-        scene->addTriangleMesh(std::span(verts), std::span(inds), smoothMetalMat);  // Smooth silver sphere
-    }
-    */
     
-    // Add rough gold box in the center
+    // Gold metal box on the left
     {
-        float boxSize = 0.2f;
-        float boxY = 0.2f;
+        float boxSize = 0.6f;
+        float boxY = 0.0f;
+        float boxX = -0.5f;  // Position on the left
+        float boxZ = -0.3f;  // Slightly forward
         float verts[] = {
             // Front face
-            -boxSize, boxY, -boxSize,
-            boxSize, boxY, -boxSize,
-            boxSize, boxY + boxSize, -boxSize,
-            -boxSize, boxY + boxSize, -boxSize,
+            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
             // Back face
-            -boxSize, boxY, boxSize,
-            boxSize, boxY, boxSize,
-            boxSize, boxY + boxSize, boxSize,
-            -boxSize, boxY + boxSize, boxSize,
+            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
             // Left face
-            -boxSize, boxY, -boxSize,
-            -boxSize, boxY, boxSize,
-            -boxSize, boxY + boxSize, boxSize,
-            -boxSize, boxY + boxSize, -boxSize,
+            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
             // Right face
-            boxSize, boxY, -boxSize,
-            boxSize, boxY, boxSize,
-            boxSize, boxY + boxSize, boxSize,
-            boxSize, boxY + boxSize, -boxSize,
+            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
             // Top face
-            -boxSize, boxY + boxSize, -boxSize,
-            boxSize, boxY + boxSize, -boxSize,
-            boxSize, boxY + boxSize, boxSize,
-            -boxSize, boxY + boxSize, boxSize,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY + boxSize, boxZ + boxSize*0.5f,
             // Bottom face
-            -boxSize, boxY, -boxSize,
-            boxSize, boxY, -boxSize,
-            boxSize, boxY, boxSize,
-            -boxSize, boxY, boxSize
+            boxX - boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY, boxZ - boxSize*0.5f,
+            boxX + boxSize*0.5f, boxY, boxZ + boxSize*0.5f,
+            boxX - boxSize*0.5f, boxY, boxZ + boxSize*0.5f
         };
         uint32_t inds[] = {
             // Front face
@@ -128,7 +125,7 @@ void buildCornellBoxVar(Scene* scene) {
             // Bottom face
             20, 21, 22, 20, 22, 23
         };
-        scene->addTriangleMesh(std::span(verts, 72), std::span(inds, 36), roughMetalMat);  // Rough gold box
+        scene->addTriangleMesh(std::span(verts, 72), std::span(inds, 36), goldMat);  // Gold metal box
     }
     
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;
@@ -146,10 +143,10 @@ int main() {
     scene->finalize();
     wr::Renderer* renderer = context.createRenderer();
     wr::Camera camera;
-    camera.position = Vec3(0.0f, 1.0f, 3.0f);
-    camera.target = Vec3(0.0f, 1.0f, 0.0f);
+    camera.position = Vec3(0.0f, 1.5f, 4.5f);  // Higher and further back
+    camera.target = Vec3(0.0f, 0.8f, 0.0f);    // Look slightly down
     camera.up = Vec3(0.0f, 1.0f, 0.0f);
-    camera.fovY = glm::radians(45.0f);
+    camera.fovY = glm::radians(40.0f);         // Slightly narrower FOV
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);
