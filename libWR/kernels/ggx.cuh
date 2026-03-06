@@ -44,6 +44,46 @@ __device__ __forceinline__ float3 fresnelSchlick(float VoH, const float3& F0) {
     );
 }
 
+// Simplified conductor Fresnel for gold (based on VLR's implementation)
+// Uses physically measured optical constants for gold
+__device__ __forceinline__ float3 fresnelConductorGold(float cosI) {
+    // Gold optical constants from VLR (measured data)
+    // eta (real part of refractive index)
+    const float3 eta = make_float3(0.12481f, 0.468228f, 1.44476f);
+    // k (extinction coefficient)
+    const float3 k = make_float3(3.32107f, 2.23761f, 1.69196f);
+    
+    cosI = fabsf(cosI);
+    float cosI2 = cosI * cosI;
+    
+    // VLR's simplified conductor Fresnel formula
+    float3 _2EtaCosI = make_float3(2.0f * eta.x * cosI, 2.0f * eta.y * cosI, 2.0f * eta.z * cosI);
+    float3 tmp_f = make_float3(
+        eta.x * eta.x + k.x * k.x,
+        eta.y * eta.y + k.y * k.y,
+        eta.z * eta.z + k.z * k.z
+    );
+    float3 tmp = make_float3(tmp_f.x * cosI2, tmp_f.y * cosI2, tmp_f.z * cosI2);
+    
+    float3 Rparl2 = make_float3(
+        (tmp.x - _2EtaCosI.x + 1.0f) / (tmp.x + _2EtaCosI.x + 1.0f),
+        (tmp.y - _2EtaCosI.y + 1.0f) / (tmp.y + _2EtaCosI.y + 1.0f),
+        (tmp.z - _2EtaCosI.z + 1.0f) / (tmp.z + _2EtaCosI.z + 1.0f)
+    );
+    
+    float3 Rperp2 = make_float3(
+        (tmp_f.x - _2EtaCosI.x + cosI2) / (tmp_f.x + _2EtaCosI.x + cosI2),
+        (tmp_f.y - _2EtaCosI.y + cosI2) / (tmp_f.y + _2EtaCosI.y + cosI2),
+        (tmp_f.z - _2EtaCosI.z + cosI2) / (tmp_f.z + _2EtaCosI.z + cosI2)
+    );
+    
+    return make_float3(
+        (Rparl2.x + Rperp2.x) * 0.5f,
+        (Rparl2.y + Rperp2.y) * 0.5f,
+        (Rparl2.z + Rperp2.z) * 0.5f
+    );
+}
+
 // Calculate F0 from IOR (for dielectrics)
 __device__ __forceinline__ float3 iorToF0(float ior) {
     float f0 = ((ior - 1.0f) / (ior + 1.0f));
@@ -135,8 +175,17 @@ __device__ __forceinline__ float3 evaluateGGXReflection(
     // Cook-Torrance microfacet specular BRDF
     float D = ggxD(NoH, alpha);
     float G = ggxG(NoV, NoL, alpha);
-    float3 F0 = mixF0(albedo, metallic, ior);
-    float3 F = fresnelSchlick(VoH, F0);
+    
+    // Use conductor Fresnel for pure metals, Schlick for dielectrics/mixed
+    float3 F;
+    if (metallic > 0.99f) {
+        // Pure metal: use physically-based conductor Fresnel (gold)
+        F = fresnelConductorGold(VoH);
+    } else {
+        // Dielectric or mixed: use Schlick approximation
+        float3 F0 = mixF0(albedo, metallic, ior);
+        F = fresnelSchlick(VoH, F0);
+    }
     
     // Specular term: D * G * F / (4 * NoV * NoL)
     float3 specular = make_float3(

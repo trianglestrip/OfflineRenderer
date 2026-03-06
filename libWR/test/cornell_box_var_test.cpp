@@ -18,17 +18,21 @@ void buildCornellBoxVar(Scene* scene) {
     uint32_t checkerTex = Texture2D::create(scene, resolveResourcePath("checkerboard_line.png").string());
     uint32_t floorMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f), checkerTex);
     
-    uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
-    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.63f, 0.065f, 0.05f));  // Saturated red
-    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.14f, 0.16f, 0.55f));  // Saturated blue
-    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(15.0f, 15.0f, 15.0f));
-    uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 1.5f);
+    // VLR uses "sRGB Gamma" color space, which converts sRGB to linear
+    // sRGB 0.75 -> linear ~0.522
+    // sRGB 0.25 -> linear ~0.0508
+    uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.522f, 0.522f, 0.522f));  // VLR white (sRGB 0.75 -> linear)
+    uint32_t redMat = scene->addLambertianMaterial(Vec3(0.522f, 0.0508f, 0.0508f));  // VLR red (sRGB to linear)
+    uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.0508f, 0.0508f, 0.522f));  // VLR blue (sRGB to linear)
+    uint32_t lightMat = scene->addEmissiveMaterial(Vec3(30.0f, 30.0f, 30.0f));
+    uint32_t glassMat = scene->addGlassMaterial(Vec3(0.999f, 0.999f, 0.999f), 2.4f);  // Diamond IOR (matching VLR)
     
-    // GGX materials for metal box
+    // GGX materials for metal box (matching VLR's gold appearance)
+    // Note: The gold color comes from the conductor Fresnel equation with physical eta/k values
     uint32_t goldMat = scene->addGGXReflectionMaterial(
-        Vec3(1.0f, 0.782f, 0.344f),  // Standard gold albedo (more accurate)
-        0.15f,                        // Roughness (increased for stability)
-        1.0f                          // Metallic
+        Vec3(1.0f, 0.782f, 0.344f),  // Standard gold albedo
+        0.10f,                        // Low roughness for clear reflections
+        1.0f                          // Metallic (triggers conductor Fresnel)
     );
     
     const float L = -1.5f, R = 1.5f;
@@ -37,7 +41,7 @@ void buildCornellBoxVar(Scene* scene) {
     
     {
         float verts[] = { L, B, F,  L, B, N,  R, B, N,  R, B, F };
-        float uvs[] = { 0.0f, 4.0f,  0.0f, 0.0f,  4.0f, 0.0f,  4.0f, 4.0f };
+        float uvs[] = { 0.0f, 5.0f,  0.0f, 0.0f,  5.0f, 0.0f,  5.0f, 5.0f };  // VLR UV coordinates
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), std::span(uvs, 8), floorMat);
     }
@@ -64,7 +68,7 @@ void buildCornellBoxVar(Scene* scene) {
     {
         const float lx = 0.5f;
         const float lz = 0.5f;
-        const float ly = T - 0.01f;
+        const float ly = 2.9f;  // VLR exact light position
         float verts[] = { -lx, ly, -lz,  lx, ly, -lz,  lx, ly, lz,  -lx, ly, lz };
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
         scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), lightMat);
@@ -78,12 +82,13 @@ void buildCornellBoxVar(Scene* scene) {
     }
     
     // Gold metal box on the left (matching CornellBox_var.jpg)
+    // Rotated for more interesting reflections
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
         // Position: x=-0.6 (left), y=0.5 (half height), z=0.0 (center)
-        // Size: 1.0 (same as reference)
-        createBox(verts, inds, -0.6f, 0.5f, 0.0f, 1.0f);  // Gold box on left
+        // Size: 1.0, Rotation: ~20 degrees around Y axis
+        createRotatedBox(verts, inds, -0.6f, 0.5f, 0.0f, 1.0f, glm::radians(20.0f));
         scene->addTriangleMesh(std::span(verts), std::span(inds), goldMat);
     }
     
@@ -102,10 +107,10 @@ int main() {
     scene->finalize();
     wr::Renderer* renderer = context.createRenderer();
     wr::Camera camera;
-    camera.position = Vec3(0.0f, 1.5f, 4.5f);  // Higher and further back
-    camera.target = Vec3(0.0f, 1.3f, 0.0f);    // Look higher to see ceiling light
+    camera.position = Vec3(0.0f, 1.5f, 6.0f);  // Match VLR camera position
+    camera.target = Vec3(0.0f, 1.5f, 0.0f);    // Look at center
     camera.up = Vec3(0.0f, 1.0f, 0.0f);
-    camera.fovY = glm::radians(45.0f);         // Wider FOV to see more of the ceiling
+    camera.fovY = glm::radians(40.0f);         // Match VLR FOV (40 degrees)
     camera.aspect = static_cast<float>(config.width) / config.height;
     
     std::vector<wr::Vec3> image(config.width * config.height);

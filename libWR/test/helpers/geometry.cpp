@@ -202,4 +202,33 @@ void createBox(std::vector<float>& vertices,
     indices.assign(inds, inds + 36);
 }
 
+void createRotatedBox(std::vector<float>& vertices,
+                      std::vector<uint32_t>& indices,
+                      float cx, float cy, float cz,
+                      float size,
+                      float rotationY) {
+    // First create an axis-aligned box at origin
+    createBox(vertices, indices, 0.0f, 0.0f, 0.0f, size);
+    
+    // Apply Y-axis rotation and translation
+    float cosY = std::cos(rotationY);
+    float sinY = std::sin(rotationY);
+    
+    // Rotate each vertex around Y axis, then translate to (cx, cy, cz)
+    for (size_t i = 0; i < vertices.size(); i += 3) {
+        float x = vertices[i + 0];
+        float y = vertices[i + 1];
+        float z = vertices[i + 2];
+        
+        // Rotate around Y axis
+        float newX = cosY * x - sinY * z;
+        float newZ = sinY * x + cosY * z;
+        
+        // Translate to final position
+        vertices[i + 0] = newX + cx;
+        vertices[i + 1] = y + cy;
+        vertices[i + 2] = newZ + cz;
+    }
+}
+
 } // namespace test_helpers

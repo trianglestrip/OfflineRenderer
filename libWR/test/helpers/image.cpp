@@ -20,25 +20,36 @@ inline float ACESFilmic(float x) {
     return std::clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
 }
 
+// Reinhard Tone Mapping (matching VLR)
+// Formula: 1 - exp(-x)
+inline float ReinhardToneMap(float x) {
+    return 1.0f - std::exp(-x);
+}
+
 void savePNG(const char* filename, const wr::Vec3* image, uint32_t width, uint32_t height) {
     std::vector<uint8_t> pixels(width * height * 3);
 
-    // Tone mapping parameters
-    const float exposure = 2.2f;  // Adjusted for ACES
+    // Tone mapping parameters (matching VLR's Reinhard with brightnessCoeff=1.0)
+    const float brightnessCoeff = 1.0f;  // VLR's brightness coefficient
     const float gamma = 1.0f / 2.2f;
 
     for (uint32_t i = 0; i < width * height; ++i) {
-        // Apply exposure
-        float r = image[i].x * exposure;
-        float g = image[i].y * exposure;
-        float b = image[i].z * exposure;
+        // Apply brightness coefficient (VLR's exposure equivalent)
+        float r = image[i].x * brightnessCoeff;
+        float g = image[i].y * brightnessCoeff;
+        float b = image[i].z * brightnessCoeff;
         
-        // ACES Filmic tone mapping (better color preservation and contrast)
-        r = ACESFilmic(r);
-        g = ACESFilmic(g);
-        b = ACESFilmic(b);
+        // Clamp negative values
+        r = std::max(r, 0.0f);
+        g = std::max(g, 0.0f);
+        b = std::max(b, 0.0f);
         
-        // Gamma correction (ACES output is in linear space)
+        // Reinhard tone mapping (matching VLR: 1 - exp(-x))
+        r = ReinhardToneMap(r);
+        g = ReinhardToneMap(g);
+        b = ReinhardToneMap(b);
+        
+        // Gamma correction (sRGB gamma)
         pixels[i * 3 + 0] = static_cast<uint8_t>(std::pow(r, gamma) * 255);
         pixels[i * 3 + 1] = static_cast<uint8_t>(std::pow(g, gamma) * 255);
         pixels[i * 3 + 2] = static_cast<uint8_t>(std::pow(b, gamma) * 255);
