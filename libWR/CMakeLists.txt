@@ -18,6 +18,7 @@ message(STATUS "Using OptiX SDK: ${OptiX_INSTALL_DIR}")
 # CUDA kernels
 set(WR_OPTIX_KERNELS
     "kernels/trace.cu"
+    "kernels/photon_trace.cu"
 )
 
 set(WR_CUDA_KERNELS

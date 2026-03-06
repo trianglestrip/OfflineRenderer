@@ -106,6 +106,40 @@ struct GeometryBuffers {
     const float* uvs;                // 2 floats per vertex, null if no UVs
 };
 
+// Photon structure for photon mapping (must be defined before LaunchParams)
+struct Photon {
+    float3 position;
+    float3 direction;  // Incoming direction
+    float3 power;      // Photon energy
+    uint32_t flags;    // Type flags
+};
+
+// Photon map parameters
+struct PhotonMapParams {
+    const Photon* photons;           // Photon buffer
+    uint32_t numPhotons;             // Current photon count
+    uint32_t maxPhotons;             // Maximum photons
+    float searchRadius;              // Search radius for k-NN
+    uint32_t maxPhotonsPerQuery;     // Max photons to gather
+};
+
+// Caustic photon map (separate for quality)
+struct CausticPhotonMapParams {
+    const Photon* photons;
+    uint32_t numPhotons;
+    uint32_t maxPhotons;
+    float searchRadius;
+    uint32_t maxPhotonsPerQuery;
+};
+
+// Flags for photon types
+enum PhotonFlags : uint32_t {
+    PHOTON_DIRECT = 1 << 0,
+    PHOTON_INDIRECT = 1 << 1,
+    PHOTON_CAUSTIC = 1 << 2,
+    PHOTON_SHADOW = 1 << 3
+};
+
 // Launch parameters for OptiX
 struct LaunchParams {
     OptixTraversableHandle traversable;
@@ -152,6 +186,11 @@ struct LaunchParams {
     uint32_t envMapWidth;
     uint32_t envMapHeight;
     uint32_t _envPadding;      // Padding for alignment
+    
+    // Photon mapping
+    PhotonMapParams photonMap;
+    CausticPhotonMapParams causticMap;
+    uint32_t usePhotonMapping;  // 0 = disabled, 1 = enabled
 };
 
 // Compact kernel parameters

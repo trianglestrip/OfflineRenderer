@@ -1,5 +1,6 @@
 #pragma once
 #include "material_common.cuh"
+#include "photon_mapping.cuh"
 
 namespace wr {
 namespace internal {
@@ -11,6 +12,22 @@ __device__ __forceinline__ void shadeLambertian(
     const MaterialData& mat,
     const LaunchParams* p
 ) {
+    // Get albedo
+    float3 albedo = getMaterialAlbedo(mat, hit.uv,
+        reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
+    
+    // Photon mapping contribution (caustics)
+    if (p->usePhotonMapping && ray.depth == 0) {
+        float3 causticRadiance = estimateCausticRadiance(
+            p->causticMap,
+            hit.position,
+            hit.normal,
+            albedo
+        );
+        
+        // Add caustic contribution to radiance
+        ray.radiance = ray.radiance + causticRadiance;
+    }
     // Next Event Estimation (NEE) - Direct light sampling with shadow visibility test
     if (p->useNEE && p->numEmissiveTriangles > 0 && !ray.neeDone) {
         // Sample a light source (use decorrelated RNG)
@@ -76,9 +93,7 @@ __device__ __forceinline__ void shadeLambertian(
             // MIS weight (power heuristic)
             float misWeight = powerHeuristic(lightPdf, bsdfPdf);
             
-            // Get albedo (texture or constant)
-            float3 albedo = getMaterialAlbedo(mat, hit.uv,
-                reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
+            // albedo was already fetched at the beginning
             float3 lightEmission = make_float3(lightMat.emission.x, lightMat.emission.y, lightMat.emission.z);
             
             // BSDF evaluation: albedo / pi * cos(theta)
@@ -130,8 +145,7 @@ __device__ __forceinline__ void shadeLambertian(
     
     // Update throughput: albedo / pi * cos(theta) / pdf
     // For cosine sampling: pdf = cos(theta) / pi, so this simplifies to albedo
-    float3 albedo = getMaterialAlbedo(mat, hit.uv,
-        reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
+    // albedo was already fetched at the beginning
     ray.throughput = ray.throughput * albedo;
     
     ray.prevPdf = bsdfPdf;
