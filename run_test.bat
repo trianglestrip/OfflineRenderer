@@ -26,7 +26,7 @@ if not exist build (
     )
 )
 
-REM Build test
+REM Build test (this will also rebuild libWR if needed)
 echo Building test program...
 cmake --build build --config %CONFIG% --target wr_cornell_box_var_test
 
@@ -34,6 +34,8 @@ if errorlevel 1 (
     echo Build failed!
     exit /b 1
 )
+
+echo Test executable built successfully.
 
 echo.
 echo ========================================

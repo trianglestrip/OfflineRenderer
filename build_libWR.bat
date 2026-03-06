@@ -26,9 +26,9 @@ if not exist build (
     )
 )
 
-REM Build libWR
-echo Building libWR library...
-cmake --build build --config %CONFIG% --target libWR
+REM Build libWR (with clean to force CUDA kernel recompilation)
+echo Building libWR library (clean first to recompile CUDA kernels)...
+cmake --build build --config %CONFIG% --target libWR --clean-first
 
 if errorlevel 1 (
     echo Build failed!
