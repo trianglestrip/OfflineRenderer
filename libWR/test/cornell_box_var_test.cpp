@@ -77,11 +77,11 @@ void buildCornellBoxVar(Scene* scene) {
         scene->addTriangleMesh(std::span(verts), std::span(inds), glassMat);
     }
     
-    // Gold metal sphere on the left (using sphere to test if material works)
+    // Gold metal sphere on the left
     {
         std::vector<float> verts;
         std::vector<uint32_t> inds;
-        createSphere(verts, inds, 0.5f, -0.4f, 0.5f, 0.6f, 32, 24);  // Gold sphere
+        createSphere(verts, inds, -0.6f, 0.6f, 0.0f, 0.5f, 32, 24);  // Gold sphere on left
         scene->addTriangleMesh(std::span(verts), std::span(inds), goldMat);
     }
     
