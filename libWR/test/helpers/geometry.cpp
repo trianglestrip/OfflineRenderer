@@ -122,4 +122,84 @@ void createSphere(std::vector<float>& vertices,
     }
 }
 
+void createBox(std::vector<float>& vertices,
+               std::vector<uint32_t>& indices,
+               float cx, float cy, float cz,
+               float size) {
+    vertices.clear();
+    indices.clear();
+    
+    float halfSize = size * 0.5f;
+    
+    // 8 vertices of the cube
+    // 0: -x, -y, -z (left, bottom, back)
+    // 1: +x, -y, -z (right, bottom, back)
+    // 2: +x, +y, -z (right, top, back)
+    // 3: -x, +y, -z (left, top, back)
+    // 4: -x, -y, +z (left, bottom, front)
+    // 5: +x, -y, +z (right, bottom, front)
+    // 6: +x, +y, +z (right, top, front)
+    // 7: -x, +y, +z (left, top, front)
+    
+    float verts[] = {
+        // Front face (z = +halfSize, facing +z)
+        cx - halfSize, cy - halfSize, cz + halfSize,  // 4
+        cx + halfSize, cy - halfSize, cz + halfSize,  // 5
+        cx + halfSize, cy + halfSize, cz + halfSize,  // 6
+        cx - halfSize, cy + halfSize, cz + halfSize,  // 7
+        
+        // Back face (z = -halfSize, facing -z)
+        cx + halfSize, cy - halfSize, cz - halfSize,  // 1
+        cx - halfSize, cy - halfSize, cz - halfSize,  // 0
+        cx - halfSize, cy + halfSize, cz - halfSize,  // 3
+        cx + halfSize, cy + halfSize, cz - halfSize,  // 2
+        
+        // Left face (x = -halfSize, facing -x)
+        cx - halfSize, cy - halfSize, cz - halfSize,  // 0
+        cx - halfSize, cy - halfSize, cz + halfSize,  // 4
+        cx - halfSize, cy + halfSize, cz + halfSize,  // 7
+        cx - halfSize, cy + halfSize, cz - halfSize,  // 3
+        
+        // Right face (x = +halfSize, facing +x)
+        cx + halfSize, cy - halfSize, cz + halfSize,  // 5
+        cx + halfSize, cy - halfSize, cz - halfSize,  // 1
+        cx + halfSize, cy + halfSize, cz - halfSize,  // 2
+        cx + halfSize, cy + halfSize, cz + halfSize,  // 6
+        
+        // Top face (y = +halfSize, facing +y)
+        cx - halfSize, cy + halfSize, cz + halfSize,  // 7
+        cx + halfSize, cy + halfSize, cz + halfSize,  // 6
+        cx + halfSize, cy + halfSize, cz - halfSize,  // 2
+        cx - halfSize, cy + halfSize, cz - halfSize,  // 3
+        
+        // Bottom face (y = -halfSize, facing -y)
+        cx - halfSize, cy - halfSize, cz - halfSize,  // 0
+        cx + halfSize, cy - halfSize, cz - halfSize,  // 1
+        cx + halfSize, cy - halfSize, cz + halfSize,  // 5
+        cx - halfSize, cy - halfSize, cz + halfSize,  // 4
+    };
+    
+    vertices.assign(verts, verts + 72);
+    
+    // Indices for each face
+    // Note: OptiX calculates normal as normalize(cross(v1 - v0, v2 - v0))
+    // For counter-clockwise vertices (from outside), this points outward
+    uint32_t inds[] = {
+        // Front face (facing +z)
+        0, 2, 1, 0, 3, 2,
+        // Back face (facing -z)
+        4, 6, 5, 4, 7, 6,
+        // Left face (facing -x)
+        8, 10, 9, 8, 11, 10,
+        // Right face (facing +x)
+        12, 14, 13, 12, 15, 14,
+        // Top face (facing +y)
+        16, 18, 17, 16, 19, 18,
+        // Bottom face (facing -y)
+        20, 22, 21, 20, 23, 22
+    };
+    
+    indices.assign(inds, inds + 36);
+}
+
 } // namespace test_helpers

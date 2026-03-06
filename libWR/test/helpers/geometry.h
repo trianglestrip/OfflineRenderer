@@ -26,6 +26,12 @@ void createSphere(std::vector<float>& vertices,
                   int segments = 32,
                   int rings = 24);
 
+// Create axis-aligned box mesh
+void createBox(std::vector<float>& vertices,
+               std::vector<uint32_t>& indices,
+               float cx, float cy, float cz,
+               float size);
+
 // Math constants (for convenience, from GLM)
 constexpr float PI = glm::pi<float>();
 constexpr float TWO_PI = glm::two_pi<float>();
