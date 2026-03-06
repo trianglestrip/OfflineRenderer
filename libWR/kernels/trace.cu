@@ -188,7 +188,10 @@ extern "C" __global__ void __closesthit__trace() {
                 
                 float distSq = t * t;
                 float cosLight = fabsf(dot(normal, direction));
-                float lightPdf = distSq / (cosLight * area * params->numEmissiveTriangles);
+                
+                // Correct PDF calculation: pdfArea * distSq / cosLight
+                float pdfArea = 1.0f / (params->numEmissiveTriangles * area);
+                float lightPdf = pdfArea * distSq / fmaxf(cosLight, 1e-8f);
                 
                 // MIS weight: power heuristic
                 misWeight = powerHeuristic(ray.prevPdf, lightPdf);
