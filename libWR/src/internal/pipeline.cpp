@@ -8,6 +8,13 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace wr {
 
@@ -15,11 +22,31 @@ using namespace internal;
 
 extern OptixDeviceContext getOptixContext();
 
+static std::filesystem::path getExecutableDirectory() {
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+    std::filesystem::path exePath(buffer);
+    return exePath.parent_path();
+#else
+    char buffer[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1) {
+        buffer[len] = '\0';
+        std::filesystem::path exePath(buffer);
+        return exePath.parent_path();
+    }
+    return std::filesystem::current_path();
+#endif
+}
+
 static std::vector<char> loadPTX(const char* filename) {
-    // PTX files are copied to the same directory as the executable by CMake
-    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    std::filesystem::path exeDir = getExecutableDirectory();
+    std::filesystem::path ptxPath = exeDir / filename;
+    
+    std::ifstream file(ptxPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        throw std::runtime_error(std::string("Failed to open PTX file: ") + filename);
+        throw std::runtime_error(std::string("Failed to open PTX file: ") + ptxPath.string());
     }
     
     size_t size = file.tellg();

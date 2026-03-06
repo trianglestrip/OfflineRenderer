@@ -10,10 +10,35 @@
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace wr {
 
 using namespace internal;
+
+static std::filesystem::path getExecutableDirectory() {
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+    std::filesystem::path exePath(buffer);
+    return exePath.parent_path();
+#else
+    char buffer[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1) {
+        buffer[len] = '\0';
+        std::filesystem::path exePath(buffer);
+        return exePath.parent_path();
+    }
+    return std::filesystem::current_path();
+#endif
+}
 
 struct PipelineImpl;
 extern PipelineImpl* createPipeline();
@@ -48,9 +73,13 @@ struct RendererImpl {
     uint32_t maxRays = 0;
     
     void loadKernels() {
-        // CUBIN files are copied to the same directory as the executable by CMake
-        CU_CHECK(cuModuleLoad(&shadeModule, "shade.cubin"));
-        CU_CHECK(cuModuleLoad(&compactModule, "compact.cubin"));
+        std::filesystem::path exeDir = getExecutableDirectory();
+        
+        std::string shadePath = (exeDir / "shade.cubin").string();
+        std::string compactPath = (exeDir / "compact.cubin").string();
+        
+        CU_CHECK(cuModuleLoad(&shadeModule, shadePath.c_str()));
+        CU_CHECK(cuModuleLoad(&compactModule, compactPath.c_str()));
         
         CU_CHECK(cuModuleGetFunction(&shadeKernel, shadeModule, "shade"));
         CU_CHECK(cuModuleGetFunction(&compactKernel, compactModule, "compact"));

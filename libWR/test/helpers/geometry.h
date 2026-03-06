@@ -2,8 +2,8 @@
 
 #include <wr/types.h>
 #include <vector>
-#include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
+#include "glm.hpp"
+#include "gtc/constants.hpp"
 
 namespace test_helpers {
 
