@@ -16,6 +16,11 @@ __device__ __forceinline__ void shadeGlass(
     float3 wo = -ray.direction;
     float cosI = dot(wo, hit.normal);
     
+    // Debug: Check if shader is called for center pixel
+    uint32_t px = ray.pixelIndex % p->width;
+    uint32_t py = ray.pixelIndex / p->width;
+    bool isCenter = (px == p->width / 2 && py == p->height / 2);
+    
     float etaI = 1.0f;
     float etaT = mat.ior;
     float3 n = hit.normal;
@@ -31,11 +36,20 @@ __device__ __forceinline__ void shadeGlass(
     // Fresnel reflectance
     float F = fresnelDielectric(cosI, etaI, etaT);
     
+    if (isCenter && ray.depth <= 3) {
+        printf("[Glass] depth=%u, cosI=%.3f, eta=%.3f/%.3f, F=%.3f, throughput=(%.3f,%.3f,%.3f)\n",
+               ray.depth, cosI, etaI, etaT, F,
+               ray.throughput.x, ray.throughput.y, ray.throughput.z);
+    }
+    
     // Sample reflection vs refraction based on Fresnel
     float r = rnd_dim(ray.seed, ray.rngDimension++);
     
     if (r < F) {
         // Fresnel reflection
+        if (isCenter && ray.depth <= 3) {
+            printf("[Glass] -> Reflection branch\n");
+        }
         float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
         ray.direction = reflected;
         
@@ -57,6 +71,10 @@ __device__ __forceinline__ void shadeGlass(
         );
     } else {
         // Attempt refraction
+        if (isCenter && ray.depth <= 3) {
+            printf("[Glass] -> Refraction branch\n");
+        }
+        
         float eta = etaI / etaT;
         float sinT2 = eta * eta * (1.0f - cosI * cosI);
         

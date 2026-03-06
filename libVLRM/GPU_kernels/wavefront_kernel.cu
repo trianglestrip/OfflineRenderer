@@ -29,7 +29,10 @@ namespace vlrm {
         const float3& tangent,
         const float3& bitangent
     ) {
-        return localDir.x * tangent + localDir.y * bitangent + localDir.z * normal;
+        Vector3D result = asVector3D(localDir).x * asVector3D(tangent) + 
+                          asVector3D(localDir).y * asVector3D(bitangent) + 
+                          asVector3D(localDir).z * asVector3D(normal);
+        return asOptiXType(result);
     }
 
     __device__ __forceinline__ void makeCoordinateSystem(
@@ -40,8 +43,8 @@ namespace vlrm {
         float sign = normal.z >= 0 ? 1 : -1;
         const float a = -1 / (sign + normal.z);
         const float b = normal.x * normal.y * a;
-        tangent = make_float3(1 + sign * normal.x * normal.x * a, sign * b, -sign * normal.x);
-        bitangent = make_float3(b, sign + normal.y * normal.y * a, -normal.y);
+        tangent = asOptiXType(Vector3D(1 + sign * normal.x * normal.x * a, sign * b, -sign * normal.x));
+        bitangent = asOptiXType(Vector3D(b, sign + normal.y * normal.y * a, -normal.y));
     }
 
     CUDA_DEVICE_KERNEL void shadeAndGenerateRays(
@@ -116,9 +119,9 @@ namespace vlrm {
         
         ray.throughput = ray.throughput * bsdf * (cosTheta / bsdfPdf);
         
-        float3 offsetDir = dot(worldDir, asOptiXType(hitNormal)) > 0.0f ? 
-            asOptiXType(hitNormal) : -asOptiXType(hitNormal);
-        ray.origin = asOptiXType(hitPos) + offsetDir * 1e-4f;
+        float3 offsetDir = dot(asVector3D(worldDir), asVector3D(asOptiXType(hitNormal))) > 0.0f ? 
+            asOptiXType(hitNormal) : asOptiXType(-hitNormal);
+        ray.origin = asOptiXType(Vector3D(hitPos.x, hitPos.y, hitPos.z) + asVector3D(offsetDir) * 1e-4f);
         ray.direction = worldDir;
         ray.tMin = 0.0f;
         ray.tMax = 1e30f;

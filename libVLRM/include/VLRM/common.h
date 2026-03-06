@@ -140,12 +140,12 @@ namespace vlrm {
     }
 
     template <typename RealType>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr RealType lerp(RealType a, RealType b, RealType t) {
+    CUDA_DEVICE_FUNCTION constexpr RealType lerp(RealType a, RealType b, RealType t) {
         return a * (1 - t) + b * t;
     }
 
     template <typename T>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr T pow2(T x) {
+    CUDA_DEVICE_FUNCTION constexpr T pow2(T x) {
         if constexpr (std::is_same_v<T, int32_t>)
             VLRMAssert(x >= -46340 && x <= 46340, "pow2(): int32_t Overflow.");
         if constexpr (std::is_same_v<T, uint32_t>)
@@ -154,26 +154,26 @@ namespace vlrm {
     }
 
     template <typename T>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr T pow3(T x) {
+    CUDA_DEVICE_FUNCTION constexpr T pow3(T x) {
         return x * x * x;
     }
 
     template <typename T>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr T pow4(T x) {
+    CUDA_DEVICE_FUNCTION constexpr T pow4(T x) {
         return x * x * x * x;
     }
 
     template <typename T>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr T pow5(T x) {
+    CUDA_DEVICE_FUNCTION constexpr T pow5(T x) {
         return x * x * x * x * x;
     }
 
     template <typename RealType>
-    CUDA_DEVICE_FUNCTION CUDA_INLINE constexpr RealType saturate(RealType x) {
-        return std::clamp<RealType>(x, 0, 1);
+    CUDA_DEVICE_FUNCTION constexpr RealType saturate(RealType x) {
+        return min(max(x, static_cast<RealType>(0)), static_cast<RealType>(1));
     }
 
-    CUDA_DEVICE_FUNCTION CUDA_INLINE uint32_t lzcnt(uint32_t x) {
+    CUDA_DEVICE_FUNCTION uint32_t lzcnt(uint32_t x) {
 #if defined(VLRM_Host)
         return _lzcnt_u32(x);
 #else
@@ -181,7 +181,7 @@ namespace vlrm {
 #endif
     }
 
-    CUDA_DEVICE_FUNCTION CUDA_INLINE uint32_t tzcnt(uint32_t x) {
+    CUDA_DEVICE_FUNCTION uint32_t tzcnt(uint32_t x) {
 #if defined(VLRM_Host)
         return _tzcnt_u32(x);
 #else
@@ -189,7 +189,7 @@ namespace vlrm {
 #endif
     }
 
-    CUDA_DEVICE_FUNCTION CUDA_INLINE int32_t popcnt(uint32_t x) {
+    CUDA_DEVICE_FUNCTION int32_t popcnt(uint32_t x) {
 #if defined(VLRM_Host)
         return _mm_popcnt_u32(x);
 #else

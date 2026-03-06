@@ -86,3 +86,7 @@ option(TF_BUILD_BENCHMARKS "Build Taskflow benchmarks" OFF)
 # libWR: new Wavefront library
 add_subdirectory(libWR)
 set_project_group("libWR" "libWR")
+
+# libVLRM: Wavefront renderer following libVLR conventions
+add_subdirectory(libVLRM)
+set_project_group("libVLRM" "libVLRM")

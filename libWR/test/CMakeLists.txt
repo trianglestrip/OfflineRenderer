@@ -46,5 +46,6 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
 endfunction()
 
 add_wr_test(wr_cornell_box_var_test cornell_box_var_test.cpp)
+add_wr_test(wr_metal_only_test metal_only_test.cpp)
 add_wr_test(wr_rough_glass_test rough_glass_test.cpp)
 add_wr_test(wr_material_showcase_test material_showcase_test.cpp)

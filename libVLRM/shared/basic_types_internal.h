@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "common_internal.h"
 #include "../include/VLRM/basic_types.h"
 

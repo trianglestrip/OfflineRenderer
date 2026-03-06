@@ -6,7 +6,7 @@ namespace vlrm {
     CUDA_DEVICE_KERNEL void RT_CH_NAME(pathTracingClosestHit)() {
         PTReadOnlyPayload* payload = reinterpret_cast<PTReadOnlyPayload*>(optixGetPayload_0());
         
-        float3 hitPoint = optixGetWorldRayOrigin() + optixGetRayTmax() * optixGetWorldRayDirection();
+        float3 hitPoint = asOptiXType(asVector3D(optixGetWorldRayOrigin()) + optixGetRayTmax() * asVector3D(optixGetWorldRayDirection()));
         
         float3 geometricNormal;
         {
@@ -15,9 +15,9 @@ namespace vlrm {
             float3 v0 = params.vertices[indices.x];
             float3 v1 = params.vertices[indices.y];
             float3 v2 = params.vertices[indices.z];
-            float3 e1 = v1 - v0;
-            float3 e2 = v2 - v0;
-            geometricNormal = normalize(cross(e1, e2));
+            Vector3D e1 = asVector3D(v1) - asVector3D(v0);
+            Vector3D e2 = asVector3D(v2) - asVector3D(v0);
+            geometricNormal = asOptiXType(normalize(cross(e1, e2)));
         }
         
         float2 bc = optixGetTriangleBarycentrics();

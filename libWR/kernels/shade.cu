@@ -39,6 +39,21 @@ extern "C" __global__ void shade(const LaunchParams* p) {
     
     const MaterialData& mat = p->materials[hit.materialId];
     
+    // Debug: Track material hits for center pixel
+    uint32_t px = ray.pixelIndex % p->width;
+    uint32_t py = ray.pixelIndex / p->width;
+    bool isCenter = (px == p->width / 2 && py == p->height / 2);
+    
+    if (isCenter && ray.depth <= 5) {
+        const char* matName = "Unknown";
+        if (mat.type == MaterialType::Lambertian) matName = "Lambertian";
+        else if (mat.type == MaterialType::Glass) matName = "Glass";
+        else if (mat.type == MaterialType::GGXReflection) matName = "GGX";
+        else if (mat.type == MaterialType::Emissive) matName = "Emissive";
+        printf("[Shade] depth=%u, material=%s, pos=(%.2f,%.2f,%.2f)\n",
+               ray.depth, matName, hit.position.x, hit.position.y, hit.position.z);
+    }
+    
     // Apply normal map if available (modify hit info)
     HitInfo effectiveHit = hit;
     if (mat.normalTextureId > 0) {

@@ -27,7 +27,7 @@ void buildCornellBoxVar(Scene* scene) {
     // GGX materials for metal box
     uint32_t goldMat = scene->addGGXReflectionMaterial(
         Vec3(1.0f, 0.782f, 0.344f),  // Standard gold albedo (more accurate)
-        0.05f,                        // Roughness (mirror-like for bright highlights)
+        0.2f,                         // Roughness (increased for better NEE coverage)
         1.0f                          // Metallic
     );
     
@@ -80,7 +80,7 @@ void buildCornellBoxVar(Scene* scene) {
     // Gold metal box on the left
     {
         float boxSize = 0.6f;
-        float boxY = 0.0f;
+        float boxY = 0.3f;   // Raise box so it's visible (center at y=0.6)
         float boxX = -0.5f;  // Position on the left
         float boxZ = -0.3f;  // Slightly forward
         float verts[] = {
@@ -148,7 +148,7 @@ int main() {
     wr::Renderer* renderer = context.createRenderer();
     wr::Camera camera;
     camera.position = Vec3(0.0f, 1.5f, 4.5f);  // Higher and further back
-    camera.target = Vec3(0.0f, 1.3f, 0.0f);    // Look higher to see ceiling light
+    camera.target = Vec3(0.0f, 1.0f, 0.0f);    // Look at scene center (lower than before)
     camera.up = Vec3(0.0f, 1.0f, 0.0f);
     camera.fovY = glm::radians(45.0f);         // Wider FOV to see more of the ceiling
     camera.aspect = static_cast<float>(config.width) / config.height;

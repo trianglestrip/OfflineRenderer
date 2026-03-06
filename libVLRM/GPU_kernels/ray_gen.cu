@@ -37,11 +37,11 @@ namespace vlrm {
         float ndcX = (2.0f * u - 1.0f) * aspectRatio * tanHalfFovY;
         float ndcY = (1.0f - 2.0f * v) * tanHalfFovY;
         
-        float3 rayDir = normalize(
-            ndcX * params.cameraRight +
-            ndcY * params.cameraUp +
-            params.cameraForward
-        );
+        float3 rayDir = asOptiXType(normalize(
+            ndcX * asVector3D(params.cameraRight) +
+            ndcY * asVector3D(params.cameraUp) +
+            asVector3D(params.cameraForward)
+        ));
         
         uint32_t rayIndex = atomicAdd(params.rayQueueSize, 1);
         if (rayIndex >= params.maxRayQueueSize)

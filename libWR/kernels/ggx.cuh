@@ -122,6 +122,11 @@ __device__ __forceinline__ float3 evaluateGGXReflection(
     float NoV = fmaxf(0.0f, dot(n, wo));
     float NoL = fmaxf(0.0f, dot(n, wi));
     
+    // Debug: Check why BRDF is zero
+    // if (NoV < 1e-5f || NoL < 1e-5f) {
+    //     printf("[GGX eval] ZERO: NoV=%.6f, NoL=%.6f\n", NoV, NoL);
+    // }
+    
     if (NoV < 1e-5f || NoL < 1e-5f) {
         return make_float3(0.0f, 0.0f, 0.0f);
     }
@@ -137,6 +142,10 @@ __device__ __forceinline__ float3 evaluateGGXReflection(
     float G = ggxG(NoV, NoL, alpha);
     float3 F0 = mixF0(albedo, metallic, ior);
     float3 F = fresnelSchlick(VoH, F0);
+    
+    // Debug: Check intermediate values
+    // printf("[GGX eval] NoV=%.3f, NoL=%.3f, NoH=%.3f, VoH=%.3f, alpha=%.4f, D=%.1f, G=%.3f, F=(%.3f,%.3f,%.3f)\n",
+    //        NoV, NoL, NoH, VoH, alpha, D, G, F.x, F.y, F.z);
     
     // Specular term: D * G * F / (4 * NoV * NoL)
     float3 specular = make_float3(
@@ -179,7 +188,10 @@ __device__ __forceinline__ float ggxReflectionPdf(
     float NoV = fmaxf(0.0f, dot(n, wo));
     float NoL = fmaxf(0.0f, dot(n, wi));
     
+    // printf("[GGX pdf] NoV=%.6f, NoL=%.6f\n", NoV, NoL);
+    
     if (NoV < 1e-5f || NoL < 1e-5f) {
+        // printf("[GGX pdf] ZERO: NoV < 1e-5 or NoL < 1e-5\n");
         return 0.0f;
     }
     
@@ -188,6 +200,7 @@ __device__ __forceinline__ float ggxReflectionPdf(
     float VoH = fmaxf(0.0f, dot(wo, h));
     
     if (VoH < 1e-5f) {
+        // printf("[GGX pdf] ZERO: VoH < 1e-5\n");
         return 0.0f;
     }
     
@@ -195,7 +208,9 @@ __device__ __forceinline__ float ggxReflectionPdf(
     float G1 = ggxG1(NoV, alpha);
     float D = ggxD(NoH, alpha);
     
-    // PDF = G1 * |V·m| * D / |V.z| / (4 * |V·m|) = G1 * D / (4 * |V.z|)
+    // VNDF PDF for half-vector: pdf(h) = G1(V) * D(h) * max(0, V·h) / V.z
+    // Reflection Jacobian: pdf(wi) = pdf(h) / (4 * V·h)
+    // Combined: pdf(wi) = G1 * D * VoH / NoV / (4 * VoH) = G1 * D / (4 * NoV)
     return G1 * D / (4.0f * NoV);
 }
 
