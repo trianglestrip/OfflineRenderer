@@ -142,11 +142,12 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                     ray.throughput.z * bsdf.z * lightEmission.z * misWeight / lightPdf
                 );
                 
-                // Trace shadow ray to check visibility
-                // Note: In Wavefront architecture, we can't use optixTrace in CUDA kernel
-                // We need to defer shadow ray tracing to the next Trace stage
-                // For now, we add contribution directly (will be fixed with proper shadow ray support)
-                ray.radiance = ray.radiance + contrib;
+                // Safety check: skip if contribution is invalid (NaN, Inf, or negative)
+                if (!isnan(contrib.x) && !isnan(contrib.y) && !isnan(contrib.z) &&
+                    !isinf(contrib.x) && !isinf(contrib.y) && !isinf(contrib.z) &&
+                    contrib.x >= 0.0f && contrib.y >= 0.0f && contrib.z >= 0.0f) {
+                    ray.radiance = ray.radiance + contrib;
+                }
             }
         }
         
@@ -336,7 +337,12 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                     ray.throughput.z * brdf.z * lightEmission.z * cosTheta * misWeight / lightPdf
                 );
                 
-                ray.radiance = ray.radiance + contrib;
+                // Safety check: skip if contribution is invalid
+                if (!isnan(contrib.x) && !isnan(contrib.y) && !isnan(contrib.z) &&
+                    !isinf(contrib.x) && !isinf(contrib.y) && !isinf(contrib.z) &&
+                    contrib.x >= 0.0f && contrib.y >= 0.0f && contrib.z >= 0.0f) {
+                    ray.radiance = ray.radiance + contrib;
+                }
             }
         }
         
