@@ -11,6 +11,7 @@ struct RendererConfig {
     uint32_t maxBounces = 8;
     bool useNEE = true;  // Next Event Estimation
     float russianRouletteDepth = 3;
+    PhotonMapConfig photonMap;  // Photon mapping configuration
 };
 
 // Denoiser configuration

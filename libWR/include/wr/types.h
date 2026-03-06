@@ -50,4 +50,15 @@ struct Camera {
     }
 };
 
+// Photon mapping configuration
+struct PhotonMapConfig {
+    bool enabled = false;
+    uint32_t numPhotons = 100000;        // Total photons to emit
+    uint32_t maxBounces = 8;             // Max photon bounces
+    float searchRadius = 0.05f;          // Search radius for k-NN
+    uint32_t maxPhotonsPerQuery = 100;   // Max photons to gather per query
+    uint32_t causticPhotons = 50000;     // Max caustic photons
+    float causticSearchRadius = 0.02f;   // Smaller radius for sharper caustics
+};
+
 } // namespace wr

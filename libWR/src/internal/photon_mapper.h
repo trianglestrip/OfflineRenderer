@@ -1,5 +1,6 @@
 #pragma once
 
+#include "wr/types.h"  // For PhotonMapConfig
 #include "gpu_types.h"
 #include <cuda_runtime.h>
 #include <optix.h>
@@ -7,19 +8,7 @@
 namespace wr {
 namespace internal {
 
-// Forward declaration
-struct PipelineImpl;
-
-// Photon mapping configuration
-struct PhotonMapConfig {
-    bool enabled = false;
-    uint32_t numPhotons = 100000;        // Total photons to emit
-    uint32_t maxBounces = 8;             // Max photon bounces
-    float searchRadius = 0.05f;          // Search radius for k-NN
-    uint32_t maxPhotonsPerQuery = 100;   // Max photons to gather per query
-    uint32_t causticPhotons = 50000;     // Max caustic photons
-    float causticSearchRadius = 0.02f;   // Smaller radius for sharper caustics
-};
+// PipelineImpl is defined in pipeline.cpp, not needed here
 
 // Photon mapper class
 class PhotonMapper {
@@ -28,7 +17,7 @@ public:
     ~PhotonMapper();
     
     // Initialize photon mapper
-    void initialize(const PhotonMapConfig& config);
+    void initialize(const wr::PhotonMapConfig& config);
     
     // Build photon map for a scene
     void buildPhotonMap(
@@ -59,8 +48,8 @@ private:
     void freePhotonBuffers();
     void createPhotonPipeline();
     void destroyPhotonPipeline();
-    
-    PhotonMapConfig m_config;
+
+    wr::PhotonMapConfig m_config;
     
     // GPU buffers
     CUdeviceptr d_photons = 0;
@@ -72,8 +61,7 @@ private:
     uint32_t m_numPhotons = 0;
     uint32_t m_numCausticPhotons = 0;
     
-    // OptiX pipeline for photon tracing
-    PipelineImpl* m_photonPipeline = nullptr;
+    // OptiX pipeline for photon tracing (simplified - not using separate pipeline for now)
     CUmodule m_photonModule = nullptr;
     
     bool m_valid = false;

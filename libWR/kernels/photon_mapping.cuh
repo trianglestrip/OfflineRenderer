@@ -25,7 +25,9 @@ __device__ inline void storePhoton(
     p.power = power;
     p.flags = flags;
     
-    photonMap.photons[idx] = p;
+    // Use pointer arithmetic to avoid assignment operator issues
+    Photon* photonArray = const_cast<Photon*>(photonMap.photons);
+    photonArray[idx] = p;
 }
 
 // Store a caustic photon
@@ -44,7 +46,8 @@ __device__ inline void storeCausticPhoton(
     p.power = power;
     p.flags = PHOTON_CAUSTIC;
     
-    causticMap.photons[idx] = p;
+    Photon* photonArray = const_cast<Photon*>(causticMap.photons);
+    photonArray[idx] = p;
 }
 
 // Estimate radiance from photon map at a point
@@ -54,9 +57,9 @@ __device__ inline float3 estimateRadiance(
     const float3& normal,
     const float3& albedo) {
     
-    if (photonMap.numPhotons == 0) return make_float3(0.0f);
+    if (photonMap.numPhotons == 0) return make_float3(0.0f, 0.0f, 0.0f);
     
-    float3 accumulatedPower = make_float3(0.0f);
+    float3 accumulatedPower = make_float3(0.0f, 0.0f, 0.0f);
     uint32_t photonCount = 0;
     
     // Simple linear search (can be optimized with KD-tree or hash grid)
@@ -80,9 +83,10 @@ __device__ inline float3 estimateRadiance(
         }
     }
     
-    if (photonCount == 0) return make_float3(0.0f);
+    if (photonCount == 0) return make_float3(0.0f, 0.0f, 0.0f);
     
     // Divide by area (pi * r^2) for density estimation
+    const float kPi = 3.14159265f;
     float area = kPi * radiusSqr;
     float3 radiance = accumulatedPower / area;
     
@@ -97,9 +101,9 @@ __device__ inline float3 estimateCausticRadiance(
     const float3& normal,
     const float3& albedo) {
     
-    if (causticMap.numPhotons == 0) return make_float3(0.0f);
+    if (causticMap.numPhotons == 0) return make_float3(0.0f, 0.0f, 0.0f);
     
-    float3 accumulatedPower = make_float3(0.0f);
+    float3 accumulatedPower = make_float3(0.0f, 0.0f, 0.0f);
     uint32_t photonCount = 0;
     
     float radiusSqr = causticMap.searchRadius * causticMap.searchRadius;
@@ -120,8 +124,9 @@ __device__ inline float3 estimateCausticRadiance(
         }
     }
     
-    if (photonCount == 0) return make_float3(0.0f);
+    if (photonCount == 0) return make_float3(0.0f, 0.0f, 0.0f);
     
+    const float kPi = 3.14159265f;
     float area = kPi * radiusSqr;
     float3 radiance = accumulatedPower / area;
     

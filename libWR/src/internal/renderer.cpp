@@ -3,6 +3,7 @@
 #include "internal/gpu_types.h"
 #include "internal/cuda_utils.h"
 #include "internal/denoiser.h"
+#include "internal/photon_mapper.h"
 #include <optix.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
@@ -47,28 +48,29 @@ extern void destroyPipeline(PipelineImpl* impl);
 
 struct RendererImpl {
     PipelineImpl* pipeline = nullptr;
-    
+
     CUmodule shadeModule = nullptr;
     CUmodule compactModule = nullptr;
     CUfunction shadeKernel = nullptr;
     CUfunction compactKernel = nullptr;
-    
+
     CUdeviceptr d_rayPool = 0;
     CUdeviceptr d_activeIndices[2] = {0, 0};
     CUdeviceptr d_hitBuffer = 0;
     CUdeviceptr d_accumBuffer = 0;
     CUdeviceptr d_counter = 0;
-    
+
     // Denoiser guide buffers
     CUdeviceptr d_albedoBuffer = 0;
     CUdeviceptr d_normalBuffer = 0;
-    
+
     CUdeviceptr d_launchParams = 0;
     CUdeviceptr d_launchParamsPtr = 0;
     CUdeviceptr d_compactParams = 0;
-    
+
     Denoiser denoiser;
-    
+    PhotonMapper photonMapper;
+
     uint32_t numPixels = 0;
     uint32_t maxRays = 0;
     
@@ -143,11 +145,24 @@ struct RendererImpl {
     }
 };
 
-Renderer::Renderer(const RendererConfig& config) 
+Renderer::Renderer(const RendererConfig& config)
     : m_impl(new RendererImpl()), m_config(config) {
     try {
         m_impl->pipeline = createPipeline();
         m_impl->loadKernels();
+
+        // Initialize photon mapper if enabled
+        if (config.photonMap.enabled) {
+            PhotonMapConfig pmConfig;
+            pmConfig.enabled = config.photonMap.enabled;
+            pmConfig.numPhotons = config.photonMap.numPhotons;
+            pmConfig.maxBounces = config.photonMap.maxBounces;
+            pmConfig.searchRadius = config.photonMap.searchRadius;
+            pmConfig.maxPhotonsPerQuery = config.photonMap.maxPhotonsPerQuery;
+            pmConfig.causticPhotons = config.photonMap.causticPhotons;
+            pmConfig.causticSearchRadius = config.photonMap.causticSearchRadius;
+            m_impl->photonMapper.initialize(pmConfig);
+        }
     } catch (const std::exception& e) {
         std::cerr << "[Renderer] Initialization failed: " << e.what() << std::endl;
         throw;
@@ -215,7 +230,14 @@ void Renderer::render(Scene* scene,
     hostParams.maxBounces = renderParams.maxBounces;
     hostParams.rrStartDepth = renderParams.russianRouletteDepth;
     hostParams.fireflyClamp = renderParams.fireflyClamp;
-    
+
+    // Set photon mapping parameters
+    hostParams.usePhotonMapping = m_config.photonMap.enabled ? 1 : 0;
+    if (m_config.photonMap.enabled) {
+        hostParams.photonMap = m_impl->photonMapper.getPhotonMapParams();
+        hostParams.causticMap = m_impl->photonMapper.getCausticMapParams();
+    }
+
     for (uint32_t s = 0; s < spp; ++s) {
         std::cout << "\r[Renderer] Sample " << (s + 1) << "/" << spp << std::flush;
         

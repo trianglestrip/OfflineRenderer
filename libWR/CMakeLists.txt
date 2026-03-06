@@ -18,7 +18,7 @@ message(STATUS "Using OptiX SDK: ${OptiX_INSTALL_DIR}")
 # CUDA kernels
 set(WR_OPTIX_KERNELS
     "kernels/trace.cu"
-    "kernels/photon_trace.cu"
+    # "kernels/photon_trace.cu"  # TODO: Fix compilation errors
 )
 
 set(WR_CUDA_KERNELS
@@ -94,6 +94,7 @@ set(WR_INTERNAL_SOURCES
     "src/internal/renderer.cpp"
     "src/internal/pipeline.cpp"
     "src/internal/denoiser.cpp"
+    "src/internal/photon_mapper.cpp"
 )
 
 # Public headers (core API only, no utils)
