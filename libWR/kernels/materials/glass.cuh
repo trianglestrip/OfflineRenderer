@@ -39,13 +39,6 @@ __device__ __forceinline__ void shadeGlass(
         float3 reflected = ray.direction - n * (2.0f * dot(ray.direction, n));
         ray.direction = reflected;
         
-        // Throughput update for reflection:
-        // BSDF returns: coeff * F / |cos(wo)|
-        // Path tracer multiplies: bsdf_value * |cos(wo)| / pdf
-        // PDF = F
-        // Result: coeff * F / |cos| * |cos| / F = coeff
-        // For ideal glass (coeff=1), throughput unchanged
-        
         // Apply glass albedo (absorption coefficient)
         float3 glassAlbedo = getMaterialAlbedo(mat, hit.uv,
             reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
@@ -79,16 +72,6 @@ __device__ __forceinline__ void shadeGlass(
             float cosT = sqrtf(fmaxf(0.0f, 1.0f - sinT2));
             float3 refracted = eta * ray.direction + n * (eta * cosI - cosT);
             ray.direction = refracted;
-            
-            // Throughput update for refraction:
-            // BSDF returns: coeff * (1-F) * squeeze / |cos(wi)|
-            // Path tracer multiplies: bsdf_value * |cos(wi)| / pdf
-            // PDF = (1-F) * squeeze
-            // Result: coeff * (1-F) * squeeze / |cos| * |cos| / [(1-F) * squeeze] = coeff
-            // For ideal glass (coeff=1), throughput unchanged
-            //
-            // Reference: libVLR materials.cu:894-898, path_tracing.cu:250-251
-            // The squeeze factor appears in both BSDF and PDF, so they cancel out
             
             // Apply glass albedo (absorption coefficient)
             float3 glassAlbedo = getMaterialAlbedo(mat, hit.uv,
