@@ -33,7 +33,7 @@ struct MaterialData {
     float roughness;     // Alpha parameter for GGX
     float metallic;      // 0 = dielectric, 1 = metal
     uint32_t albedoTextureId;  // 0 = use albedo, else index into textures array
-    uint32_t _padding;
+    uint32_t normalTextureId;  // 0 = no normal map, else index into textures array
 };
 
 // Light sample data (for NEE)
@@ -92,8 +92,8 @@ struct CameraData {
     float4 up;          // xyz = up, w unused
     float tanHalfFovY;
     float aspect;
-    float _padding0;
-    float _padding1;
+    float focalDistance;  // For DOF: 0 = infinite focus
+    float lensRadius;     // For DOF: 0 = pinhole camera
 };
 
 // Geometry buffers
@@ -132,7 +132,7 @@ struct LaunchParams {
     uint32_t numEmissiveTriangles;
     
     CameraData camera;
-    float4 environmentRadiance;  // xyz = radiance, w unused
+    float4 environmentRadiance;  // xyz = radiance, w unused (for uniform environment)
     
     uint32_t width;
     uint32_t height;
@@ -144,6 +144,12 @@ struct LaunchParams {
     uint32_t maxBounces;
     float rrStartDepth;
     float _padding;            // Align to 16 bytes
+    
+    // HDR Environment Map (for IBL) - 8-byte aligned
+    cudaTextureObject_t envMap;  // 0 = use uniform environmentRadiance (8 bytes)
+    uint32_t envMapWidth;
+    uint32_t envMapHeight;
+    uint32_t _envPadding;      // Padding for alignment
 };
 
 // Compact kernel parameters
