@@ -158,6 +158,7 @@ void Renderer::render(Scene* scene,
     hostParams.geometry.vertices = reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getVerticesBuffer()));
     hostParams.geometry.indices = reinterpret_cast<const uint32_t*>(static_cast<CUdeviceptr>(scene->getIndicesBuffer()));
     hostParams.geometry.triangleMaterialIds = reinterpret_cast<const uint32_t*>(static_cast<CUdeviceptr>(scene->getTriangleMaterialIdsBuffer()));
+    hostParams.geometry.uvs = scene->getUVsBuffer() ? reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getUVsBuffer())) : nullptr;
     hostParams.rayPool = reinterpret_cast<RayState*>(m_impl->d_rayPool);
     hostParams.hitBuffer = reinterpret_cast<HitInfo*>(m_impl->d_hitBuffer);
     hostParams.accumBuffer = reinterpret_cast<float3*>(m_impl->d_accumBuffer);
@@ -165,6 +166,8 @@ void Renderer::render(Scene* scene,
     hostParams.normalBuffer = reinterpret_cast<float3*>(m_impl->d_normalBuffer);
     hostParams.materials = reinterpret_cast<const MaterialData*>(static_cast<CUdeviceptr>(scene->getMaterialsBuffer()));
     hostParams.numMaterials = scene->getNumMaterials();
+    hostParams.textures = scene->getNumTextures() > 0 ? reinterpret_cast<const void*>(static_cast<CUdeviceptr>(scene->getTexturesBuffer())) : nullptr;
+    hostParams.numTextures = scene->getNumTextures();
     hostParams.emissiveTriangles = reinterpret_cast<const uint32_t*>(static_cast<CUdeviceptr>(scene->getEmissiveTrianglesBuffer()));
     hostParams.emissiveTriangleCDF = reinterpret_cast<const float*>(static_cast<CUdeviceptr>(scene->getEmissiveTriangleCDFBuffer()));
     hostParams.numEmissiveTriangles = scene->getNumEmissiveTriangles();

@@ -45,4 +45,19 @@ std::filesystem::path resolveGalleryPath(const std::string& fileName) {
     return std::filesystem::path("gallery") / fileName;
 }
 
+std::filesystem::path resolveResourcePath(const std::string& fileName) {
+    std::filesystem::path exeDir = getExecutableDirectory();
+    std::vector<std::filesystem::path> candidates = {
+        exeDir / fileName,
+        exeDir / "res" / fileName,
+        exeDir / ".." / "res" / fileName,
+        exeDir / ".." / ".." / "res" / fileName,
+        exeDir / ".." / ".." / ".." / "libWR" / "test" / "res" / fileName,
+    };
+    for (const auto& p : candidates) {
+        if (std::filesystem::exists(p)) return p;
+    }
+    return exeDir / "res" / fileName;
+}
+
 } // namespace test_helpers

@@ -26,12 +26,14 @@ enum RayStage : uint32_t {
 
 // Material data (GPU)
 struct MaterialData {
-    float4 albedo;       // xyz = albedo, w unused
+    float4 albedo;       // xyz = albedo, w unused (used when albedoTextureId == 0)
     float4 emission;     // xyz = emission, w unused
     float ior;
     uint32_t type;
     float roughness;     // Alpha parameter for GGX
     float metallic;      // 0 = dielectric, 1 = metal
+    uint32_t albedoTextureId;  // 0 = use albedo, else index into textures array
+    uint32_t _padding;
 };
 
 // Light sample data (for NEE)
@@ -66,7 +68,8 @@ struct RayState {
     
     // For shadow rays (NEE visibility test)
     float3 shadowContribution;  // Pending contribution from NEE
-    float shadowRayLength;      // Distance to light source
+    float3 savedDirection;      // Incoming direction (restored after shadow test)
+    uint32_t neeDone;           // 1 = NEE done, skip to BSDF when resuming
     
     // RNG dimension counter (to avoid screen-space correlation)
     uint32_t rngDimension;
@@ -76,6 +79,7 @@ struct RayState {
 struct HitInfo {
     float3 position;
     float3 normal;
+    float2 uv;           // Interpolated UV coordinates
     uint32_t materialId;
     uint32_t primIndex;
 };
@@ -97,6 +101,7 @@ struct GeometryBuffers {
     const float* vertices;
     const uint32_t* indices;
     const uint32_t* triangleMaterialIds;
+    const float* uvs;    // 2 floats per vertex, null if no UVs
 };
 
 // Launch parameters for OptiX
@@ -116,6 +121,10 @@ struct LaunchParams {
     
     const MaterialData* materials;
     uint32_t numMaterials;
+
+    // Textures (cudaTextureObject_t array, indexed by material albedoTextureId)
+    const void* textures;       // cudaTextureObject_t* on device
+    uint32_t numTextures;
     
     // Light sampling for NEE
     const uint32_t* emissiveTriangles;  // List of emissive triangle indices

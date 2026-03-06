@@ -15,6 +15,9 @@ using namespace wr;
 using namespace test_helpers;
 
 void buildCornellBoxVar(Scene* scene) {
+    uint32_t checkerTex = Texture2D::create(scene, resolveResourcePath("checkerboard_line.png").string());
+    uint32_t floorMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f), checkerTex);
+    
     uint32_t whiteMat = scene->addLambertianMaterial(Vec3(0.75f, 0.75f, 0.75f));
     uint32_t redMat = scene->addLambertianMaterial(Vec3(0.75f, 0.25f, 0.25f));
     uint32_t blueMat = scene->addLambertianMaterial(Vec3(0.25f, 0.25f, 0.75f));
@@ -34,8 +37,9 @@ void buildCornellBoxVar(Scene* scene) {
     
     {
         float verts[] = { L, B, F,  L, B, N,  R, B, N,  R, B, F };
+        float uvs[] = { 0.0f, 4.0f,  0.0f, 0.0f,  4.0f, 0.0f,  4.0f, 4.0f };
         uint32_t inds[] = { 0, 1, 2, 0, 2, 3 };
-        scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), whiteMat);
+        scene->addTriangleMesh(std::span(verts, 12), std::span(inds, 6), std::span(uvs, 8), floorMat);
     }
     {
         float verts[] = { L, T, N,  L, T, F,  R, T, F,  R, T, N };

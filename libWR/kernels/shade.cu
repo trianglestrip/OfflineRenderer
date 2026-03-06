@@ -3,6 +3,7 @@
 #include "vector_math.cuh"
 #include "sampling.cuh"
 #include "ggx.cuh"
+#include "materials.cuh"
 
 using namespace wr::internal;
 
@@ -61,8 +62,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
     }
     
     if (mat.type == MaterialType::Lambertian) {
-        // Next Event Estimation (NEE) - Direct light sampling
-        if (p->useNEE && p->numEmissiveTriangles > 0) {
+        // Next Event Estimation (NEE) - Direct light sampling with shadow visibility test
+        if (p->useNEE && p->numEmissiveTriangles > 0 && !ray.neeDone) {
             // Sample a light source (use decorrelated RNG)
             float lightU = rnd_dim(ray.seed, ray.rngDimension++);
             uint32_t lightIdx = sampleEmissiveTriangle(lightU, p->emissiveTriangleCDF, p->numEmissiveTriangles);
@@ -128,8 +129,9 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 // MIS weight (power heuristic)
                 float misWeight = powerHeuristic(lightPdf, bsdfPdf);
                 
-                // Extract float3 from float4
-                float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+                // Get albedo (texture or constant)
+                float3 albedo = getMaterialAlbedo(mat, hit.uv,
+                    reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
                 float3 lightEmission = make_float3(lightMat.emission.x, lightMat.emission.y, lightMat.emission.z);
                 
                 // BSDF evaluation: albedo / pi * cos(theta)
@@ -150,10 +152,25 @@ extern "C" __global__ void shade(const LaunchParams* p) {
                 if (!isnan(contrib.x) && !isnan(contrib.y) && !isnan(contrib.z) &&
                     !isinf(contrib.x) && !isinf(contrib.y) && !isinf(contrib.z) &&
                     contrib.x >= 0.0f && contrib.y >= 0.0f && contrib.z >= 0.0f) {
-                    ray.radiance = ray.radiance + contrib;
+                    // Store contribution for shadow test - do NOT add yet
+                    ray.shadowContribution = contrib;
+                    ray.savedDirection = ray.direction;  // Save incoming direction for BSDF
+                    ray.direction = toLight;
+                    // Offset origin along normal to avoid self-intersection
+                    float offset = 1e-4f;
+                    float3 offsetDir = dot(toLight, hit.normal) > 0.0f ? hit.normal : -hit.normal;
+                    ray.origin = hit.position + offsetDir * offset;
+                    ray.tMin = 1e-5f;  // Avoid self-intersection
+                    ray.tMax = dist - 1e-5f;  // Don't hit the light surface itself
+                    ray.neeDone = 1;
+                    ray.stage = RayStage::Shadow;
+                    return;  // Trace shadow ray first, then resume for BSDF
                 }
             }
         }
+        
+        // Reset neeDone for next bounce (or when no NEE was done)
+        ray.neeDone = 0;
         
         // BSDF sampling (indirect lighting)
         float3 tangent, bitangent;
@@ -169,7 +186,8 @@ extern "C" __global__ void shade(const LaunchParams* p) {
         
         // Update throughput with BSDF: albedo / pi * cos(theta) / pdf
         // For cosine sampling: pdf = cos(theta) / pi, so this simplifies to albedo
-        float3 albedo = make_float3(mat.albedo.x, mat.albedo.y, mat.albedo.z);
+        float3 albedo = getMaterialAlbedo(mat, hit.uv,
+            reinterpret_cast<const cudaTextureObject_t*>(p->textures), p->numTextures);
         ray.throughput = ray.throughput * albedo;
         
         // Store PDF for MIS on next hit

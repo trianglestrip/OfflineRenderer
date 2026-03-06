@@ -26,9 +26,16 @@ if not exist build (
     )
 )
 
-REM Build libWR (with clean to force CUDA kernel recompilation)
-echo Building libWR library (clean first to recompile CUDA kernels)...
-cmake --build build --config %CONFIG% --target libWR --clean-first
+REM Build libWR (clean CUDA artifacts to force recompilation)
+echo Building libWR library (cleaning CUDA artifacts first)...
+
+REM Delete CUDA compiled artifacts to force kernel recompilation
+if exist "build\libWR\Release\*.obj" del /Q "build\libWR\Release\*.obj" 2>nul
+if exist "build\bin\Release\*.cubin" del /Q "build\bin\Release\*.cubin" 2>nul
+if exist "build\bin\Release\*.ptx" del /Q "build\bin\Release\*.ptx" 2>nul
+
+REM Build libWR (without --clean-first to preserve test executables)
+cmake --build build --config %CONFIG% --target libWR
 
 if errorlevel 1 (
     echo Build failed!

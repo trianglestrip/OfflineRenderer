@@ -31,15 +31,18 @@ function(add_wr_test TEST_NAME SOURCE_FILE)
         target_link_options(${TEST_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT")
     endif()
 
-    # 将 render_config.ini 复制到测试运行时目录
-    # 内核文件 (ptx/cubin) 直接构建到 bin/Release
+    # Copy render_config.ini and res/ to test runtime directory
     add_custom_command(TARGET ${TEST_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/render_config.ini"
             "$<TARGET_FILE_DIR:${TEST_NAME}>/render_config.ini"
-        COMMENT "Copying render_config.ini to ${TEST_NAME} runtime directory"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:${TEST_NAME}>/res"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/res/checkerboard_line.png"
+            "$<TARGET_FILE_DIR:${TEST_NAME}>/res/checkerboard_line.png"
+        COMMENT "Copying config and resources to ${TEST_NAME} runtime directory"
     )
 endfunction()
 
 add_wr_test(wr_cornell_box_var_test cornell_box_var_test.cpp)
-add_wr_test(wr_simple_plane_test simple_plane_test.cpp)
