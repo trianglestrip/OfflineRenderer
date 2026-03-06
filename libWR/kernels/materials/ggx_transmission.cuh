@@ -7,7 +7,8 @@ namespace wr {
 namespace internal {
 
 // GGX Microfacet BSDF (Rough Glass) material shader
-// Simplified version: only transmission, using cosine-weighted hemisphere sampling
+// Current: Simplified specular refraction (no microfacet sampling)
+// TODO: Implement full GGX VNDF sampling for physically accurate rough glass
 __device__ __forceinline__ void shadeGGXTransmission(
     RayState& ray,
     const HitInfo& hit,
