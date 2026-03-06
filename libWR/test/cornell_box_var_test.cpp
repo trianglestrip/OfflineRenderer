@@ -27,7 +27,7 @@ void buildCornellBoxVar(Scene* scene) {
     // GGX materials for metal box
     uint32_t goldMat = scene->addGGXReflectionMaterial(
         Vec3(1.0f, 0.782f, 0.344f),  // Standard gold albedo (more accurate)
-        0.05f,                        // Roughness (mirror-like for bright highlights)
+        0.15f,                        // Roughness (increased for stability)
         1.0f                          // Metallic
     );
     
@@ -84,8 +84,7 @@ void buildCornellBoxVar(Scene* scene) {
         // Position: x=-0.6 (left), y=0.5 (half height), z=0.0 (center)
         // Size: 1.0 (same as reference)
         createBox(verts, inds, -0.6f, 0.5f, 0.0f, 1.0f);  // Gold box on left
-        // Test with white material first to verify geometry
-        scene->addTriangleMesh(std::span(verts), std::span(inds), whiteMat);
+        scene->addTriangleMesh(std::span(verts), std::span(inds), goldMat);
     }
     
     std::cout << "[Test] Cornell Box Variation scene built" << std::endl;

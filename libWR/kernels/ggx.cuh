@@ -223,6 +223,15 @@ __device__ __forceinline__ float3 sampleGGXReflection(
         dot(wo, n)
     );
     
+    // Check if view direction is valid (must be in upper hemisphere)
+    if (v.z <= 0.0f) {
+        pdf = 0.0f;
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+    
+    // Clamp alpha to avoid numerical issues
+    alpha = fmaxf(alpha, 0.001f);
+    
     // Stretch view direction
     float3 sv = normalize(make_float3(alpha * v.x, alpha * v.y, v.z));
     
